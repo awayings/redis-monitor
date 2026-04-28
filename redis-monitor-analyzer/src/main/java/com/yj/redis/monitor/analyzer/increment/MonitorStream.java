@@ -9,94 +9,71 @@ public class MonitorStream implements AutoCloseable {
     private final Jedis jedis;
     private final int durationSec;
     private volatile boolean running;
-    private volatile boolean started;
+    private volatile boolean connected;
 
     public MonitorStream(Jedis jedis, int durationSec) {
         this.jedis = jedis;
         this.durationSec = durationSec;
         this.running = true;
-        this.started = false;
+        this.connected = true;
     }
 
     /**
-     * Starts MONITOR streaming. Runs in a daemon thread and returns immediately.
-     * Lines are delivered to the provided handler callback.
-     *
-     * @param handler callback for received lines and errors
+     * Starts MONITOR streaming, blocking the calling thread until the duration
+     * expires or stop() is called. Lines are delivered to the handler callback.
      */
     public void start(MonitorLineHandler handler) {
-        if (started) {
-            return;
-        }
-        started = true;
-
         long deadline = System.currentTimeMillis() + durationSec * 1000L;
 
-        Thread monitorThread = new Thread(() -> {
-            try {
-                jedis.monitor(new JedisMonitor() {
-                    @Override
-                    public void onCommand(String command) {
-                        if (!running || System.currentTimeMillis() > deadline) {
-                            disconnect();
-                            return;
-                        }
-                        handler.onLine(command);
+        try {
+            jedis.monitor(new JedisMonitor() {
+                @Override
+                public void onCommand(String command) {
+                    if (!running || System.currentTimeMillis() > deadline) {
+                        disconnect();
+                        return;
                     }
-                });
-            } catch (Exception e) {
-                if (running) {
-                    handler.onError(e);
+                    handler.onLine(command);
                 }
-            } finally {
-                running = false;
+            });
+        } catch (Exception e) {
+            if (running) {
+                handler.onError(e);
             }
-        });
-        monitorThread.setDaemon(true);
-        monitorThread.start();
+        } finally {
+            running = false;
+            connected = false;
+        }
     }
 
-    /**
-     * Signals the MONITOR loop to stop.
-     */
     public void stop() {
         running = false;
+        disconnect();
     }
 
-    /**
-     * Returns whether the stream is currently running.
-     */
     public boolean isRunning() {
         return running;
     }
 
-    /**
-     * Closes the underlying Jedis connection and releases resources.
-     */
-    @Override
-    public void close() {
-        running = false;
-        disconnect();
-        if (jedis != null) {
-            try {
-                jedis.close();
-            } catch (Exception e) {
-                // suppress
-            }
-        }
-    }
-
-    /**
-     * Disconnects the underlying connection to break the blocking MONITOR loop.
-     */
     private void disconnect() {
         try {
             Connection conn = jedis.getConnection();
             if (conn != null) {
                 conn.close();
             }
-        } catch (Exception e) {
-            // suppress
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void close() {
+        running = false;
+        disconnect();
+        try {
+            if (jedis != null) {
+                jedis.close();
+            }
+        } catch (Exception ignored) {
         }
     }
 }
