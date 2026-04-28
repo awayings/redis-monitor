@@ -182,21 +182,69 @@ For keys without `:` delimiter, we use a **Prefix Trie** for clustering instead 
 ```java
 class PrefixTrie {
     TrieNode root = new TrieNode();
+    int totalNodes = 1;  // include root
+    int uniqueKeys = 0;
+
+    // Memory guards
+    static final int MAX_UNIQUE_KEYS = 100_000;
+    static final int MAX_NODES = 500_000;
+    static final int MAX_KEY_LENGTH = 200;
+    static final Set<String> seenKeys = new HashSet<>();
 
     class TrieNode {
         Map<Character, TrieNode> children = new HashMap<>();
-        int count = 0;  // how many keys pass through this node
+        int count = 0;
     }
 
-    void insert(String key) {
+    boolean insert(String key) {
+        if (key.length() > MAX_KEY_LENGTH) return false;
+        if (!seenKeys.add(key)) {
+            // duplicate key — just increment count along existing path
+            TrieNode node = root;
+            for (char c : key.toCharArray()) {
+                node = node.children.get(c);
+                node.count++;
+            }
+            return true;
+        }
+        if (seenKeys.size() > MAX_UNIQUE_KEYS) return false;
+
         TrieNode node = root;
         for (char c : key.toCharArray()) {
-            node = node.children.computeIfAbsent(c, k -> new TrieNode());
+            TrieNode child = node.children.get(c);
+            if (child == null) {
+                if (totalNodes >= MAX_NODES) return false;
+                child = new TrieNode();
+                node.children.put(c, child);
+                totalNodes++;
+            }
+            node = child;
             node.count++;
         }
+        uniqueKeys++;
+        return true;
     }
 }
 ```
+
+**Memory control strategy:**
+
+| Guard | Threshold | Trigger behavior |
+|-------|-----------|------------------|
+| Key length | 200 chars | Key too long → skip Trie, directly to `*` |
+| Unique keys | 100,000 | Too many distinct no-colon keys → skip Trie, directly to `*` |
+| Trie nodes | 500,000 | Trie too large → skip Trie, directly to `*` |
+
+**Memory footprint estimate:**
+- Each `TrieNode` ≈ 80-100 bytes (HashMap overhead + int + object header).
+- 500,000 nodes ≈ 50MB raw + HashMap expansion ≈ **~100MB maximum**.
+- `seenKeys` Set: 100,000 strings × average 50 chars ≈ **~10MB**.
+- Total PrefixTrie memory budget: **~110MB**, well within JVM heap tolerance for a CLI tool.
+
+**Why three guards instead of one:**
+- **Key length guard:** catches pathological keys (e.g., serialized JSON as key name).
+- **Unique keys guard:** prevents memory explosion from random keys (e.g., UUIDs) where each key is unique and shares almost no prefix.
+- **Node count guard:** final safety net against adversarial key shapes that share prefixes but branch heavily.
 
 **Pattern extraction (at report time):**
 DFS from root with `UPGRADE_THRESHOLD` (default 10):
@@ -236,6 +284,7 @@ If threshold=2: count=3 ≥ 2, and has 2 children → branch point → pattern: 
 
 **Unclusterable keys:**
 - Keys not belonging to any extracted pattern (subtree count < threshold) are merged into the fallback pattern `*`.
+- Keys rejected by Trie memory guards (too long, too many unique keys, or Trie node limit reached) also land in `*`.
 - Keys that fail all deserialization attempts (hex fallback) also land in `*`.
 
 **Pattern output format:**
