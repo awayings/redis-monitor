@@ -1,0 +1,207 @@
+package com.yj.redis.monitor.analyzer.increment;
+
+import org.apache.commons.lang3.StringEscapeUtils;
+
+import java.io.PrintStream;
+import java.util.List;
+
+public class ReportPrinter {
+
+    private static final long KB = 1024;
+    private static final long MB = 1024 * 1024;
+    private static final long GB = 1024 * 1024 * 1024;
+
+    private final String host;
+    private final int port;
+    private final int durationSec;
+    private final int samplesPerPattern;
+
+    public ReportPrinter(String host, int port, int durationSec, int samplesPerPattern) {
+        this.host = host;
+        this.port = port;
+        this.durationSec = durationSec;
+        this.samplesPerPattern = samplesPerPattern;
+    }
+
+    /**
+     * Prints a formatted console report to the given output stream.
+     */
+    public void printConsole(PatternStatsAggregator aggregator, NoTtlKeyStore noTtlStore,
+                             int topN, PrintStream out) {
+        List<PatternStats> topPatterns = aggregator.getTopPatterns(topN, durationSec);
+        long totalWrites = aggregator.getTotalWriteCount();
+        int totalPatterns = aggregator.getPatternCount();
+
+        // Header
+        out.println("=== Redis Memory Increment Analyzer Report ===");
+        out.println("Host: " + host + ":" + port);
+        out.println("Duration: " + durationSec + "s");
+        out.println("Total patterns: " + totalPatterns + ", Total writes: " + totalWrites);
+        out.println();
+
+        // Table header
+        out.printf("%-6s %-30s %-8s %-10s %-10s %-12s %-12s %-12s%n",
+                "Rank", "Pattern", "Writes", "Write/s", "AvgTTL", "AvgMem", "Increment", "Balanced");
+        out.println(String.format("%-6s %-30s %-8s %-10s %-10s %-12s %-12s %-12s",
+                "-----", "------", "------", "-------", "------", "------", "---------", "--------")
+                .replace(' ', '-'));
+        // Replace spaces in the separator line with dashes for a cleaner look
+        // Actually let's just use dashed separators
+        out.println("------+--------------------------------+--------+----------+----------+------------+------------+------------");
+
+        // Table body
+        int rank = 1;
+        for (PatternStats stats : topPatterns) {
+            String pattern = truncate(stats.getPattern(), 30);
+            long writes = stats.getWriteCount();
+            String writeRate = String.format("%.2f", stats.getWriteRatePerSecond(durationSec));
+            String avgTtl = formatTtlSeconds(stats.getAvgTtlSeconds());
+            String avgMem = formatBytes((long) stats.getAvgMemoryBytes());
+            String increment = formatBytes((long) stats.getIncrementBytes());
+            String balanced = formatBytes((long) stats.getBalancedBytes(durationSec));
+
+            out.printf("%-6d %-30s %-8d %-10s %-10s %-12s %-12s %-12s%n",
+                    rank, pattern, writes, writeRate, avgTtl, avgMem, increment, balanced);
+            rank++;
+        }
+
+        // Total line
+        out.println("------+--------------------------------+--------+----------+----------+------------+------------+------------");
+        double totalIncrement = 0;
+        double totalBalanced = 0;
+        for (PatternStats s : topPatterns) {
+            totalIncrement += s.getIncrementBytes();
+            totalBalanced += s.getBalancedBytes(durationSec);
+        }
+        String totalIncrementStr = formatBytes((long) totalIncrement);
+        String totalBalancedStr = formatBytes((long) totalBalanced);
+        out.printf("%-6s %-30s %-8d %-10s %-10s %-12s %-12s %-12s%n",
+                "TOTAL", "", totalWrites, "", "", "", totalIncrementStr, totalBalancedStr);
+        out.println();
+
+        // No-TTL samples section
+        List<NoTtlKeySample> noTtlSamples = noTtlStore.getSamples();
+        if (!noTtlSamples.isEmpty()) {
+            out.println("--- No-TTL Samples (keys without TTL detected via TTL command) ---");
+            out.printf("%-40s %-30s %-12s %-10s%n",
+                    "Key", "Pattern", "Memory", "Command");
+            out.println("----------------------------------------+------------------------------+------------+----------");
+            for (NoTtlKeySample sample : noTtlSamples) {
+                out.printf("%-40s %-30s %-12s %-10s%n",
+                        truncate(sample.getKey(), 40),
+                        truncate(sample.getPattern(), 30),
+                        formatBytes(sample.getMemoryBytes()),
+                        sample.getCommand());
+            }
+            out.println();
+        }
+    }
+
+    /**
+     * Prints a JSON report to the given output stream.
+     */
+    public void printJson(PatternStatsAggregator aggregator, NoTtlKeyStore noTtlStore,
+                          int topN, PrintStream out) {
+        List<PatternStats> topPatterns = aggregator.getTopPatterns(topN, durationSec);
+        long totalWrites = aggregator.getTotalWriteCount();
+        int totalPatterns = aggregator.getPatternCount();
+
+        out.println("{");
+        // Meta
+        out.println("  \"meta\": {");
+        out.println("    \"host\": " + jsonEscape(host) + ",");
+        out.println("    \"port\": " + port + ",");
+        out.println("    \"durationSec\": " + durationSec + ",");
+        out.println("    \"samplesPerPattern\": " + samplesPerPattern + ",");
+        out.println("    \"totalPatterns\": " + totalPatterns + ",");
+        out.println("    \"totalWriteCount\": " + totalWrites);
+        out.println("  },");
+
+        // Patterns
+        out.println("  \"patterns\": [");
+        for (int i = 0; i < topPatterns.size(); i++) {
+            PatternStats stats = topPatterns.get(i);
+            out.println("    {");
+            out.println("      \"pattern\": " + jsonEscape(stats.getPattern()) + ",");
+            out.println("      \"writeCount\": " + stats.getWriteCount() + ",");
+            out.println("      \"writeRatePerSecond\": " + String.format("%.2f", stats.getWriteRatePerSecond(durationSec)) + ",");
+            out.println("      \"avgTtlSec\": " + String.format("%.1f", stats.getAvgTtlSeconds()) + ",");
+            out.println("      \"avgMemoryBytes\": " + Math.round(stats.getAvgMemoryBytes()) + ",");
+            out.println("      \"incrementBytes\": " + Math.round(stats.getIncrementBytes()) + ",");
+            out.println("      \"balancedBytes\": " + Math.round(stats.getBalancedBytes(durationSec)));
+            if (i < topPatterns.size() - 1) {
+                out.println("    },");
+            } else {
+                out.println("    }");
+            }
+        }
+        out.println("  ],");
+
+        // No-TTL samples
+        List<NoTtlKeySample> noTtlSamples = noTtlStore.getSamples();
+        out.println("  \"noTtlSamples\": [");
+        for (int i = 0; i < noTtlSamples.size(); i++) {
+            NoTtlKeySample sample = noTtlSamples.get(i);
+            out.println("    {");
+            out.println("      \"key\": " + jsonEscape(sample.getKey()) + ",");
+            out.println("      \"pattern\": " + jsonEscape(sample.getPattern()) + ",");
+            out.println("      \"memoryBytes\": " + sample.getMemoryBytes() + ",");
+            out.println("      \"command\": " + jsonEscape(sample.getCommand()));
+            if (i < noTtlSamples.size() - 1) {
+                out.println("    },");
+            } else {
+                out.println("    }");
+            }
+        }
+        out.println("  ]");
+        out.println("}");
+    }
+
+    // ---- Helper methods ----
+
+    static String formatBytes(long bytes) {
+        if (bytes < 0) {
+            return "0 B";
+        }
+        if (bytes < KB) {
+            return bytes + " B";
+        }
+        if (bytes < MB) {
+            return String.format("%.2f KB", bytes / (double) KB);
+        }
+        if (bytes < GB) {
+            return String.format("%.2f MB", bytes / (double) MB);
+        }
+        return String.format("%.2f GB", bytes / (double) GB);
+    }
+
+    static String formatTtlSeconds(double seconds) {
+        if (seconds <= 0) {
+            return "-";
+        }
+        if (seconds < 60) {
+            return String.format("%.0fs", seconds);
+        }
+        if (seconds < 3600) {
+            return String.format("%.0fm", seconds / 60);
+        }
+        return String.format("%.1fh", seconds / 3600);
+    }
+
+    static String truncate(String value, int maxLen) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxLen) {
+            return value;
+        }
+        return value.substring(0, maxLen - 1) + "…";
+    }
+
+    static String jsonEscape(String value) {
+        if (value == null) {
+            return "\"\"";
+        }
+        return '"' + StringEscapeUtils.escapeJson(value) + '"';
+    }
+}
