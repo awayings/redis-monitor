@@ -1,5 +1,7 @@
 package com.yj.redis.monitor.analyzer.increment;
 
+import com.yj.redis.monitor.common.MonitorConstants;
+
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -11,15 +13,13 @@ public class Args {
             "ttl-samples-per-pattern", "upgrade-threshold", "output", "top-n", "password"
     ));
 
-    private static final Set<String> VALID_OUTPUTS = new HashSet<>(Arrays.asList("console", "json"));
-
     private final String host;
     private final int port;
     private final int durationSec;
     private final int samplesPerPattern;
     private final int ttlSamplesPerPattern;
     private final int upgradeThreshold;
-    private final String output;
+    private final OutputFormat output;
     private final int topN;
     private final String password;
 
@@ -47,12 +47,16 @@ public class Args {
 
         if (args != null) {
             for (String arg : args) {
-                if (!arg.startsWith("--") || !arg.contains("=")) {
+                if (!arg.startsWith("--")) {
+                    throw new IllegalArgumentException("Invalid argument format: " + arg);
+                }
+                int eqIdx = arg.indexOf('=');
+                if (eqIdx < 0) {
                     throw new IllegalArgumentException("Invalid argument format: " + arg);
                 }
 
-                String key = arg.substring(2, arg.indexOf('='));
-                String value = arg.substring(arg.indexOf('=') + 1);
+                String key = arg.substring(2, eqIdx);
+                String value = arg.substring(eqIdx + 1);
 
                 if (!VALID_KEYS.contains(key)) {
                     throw new IllegalArgumentException("Unknown argument: --" + key);
@@ -78,11 +82,12 @@ public class Args {
                         builder.upgradeThreshold = parsePositiveInt("upgrade-threshold", value);
                         break;
                     case "output":
-                        if (!VALID_OUTPUTS.contains(value)) {
+                        try {
+                            builder.output = OutputFormat.valueOf(value.toUpperCase());
+                        } catch (IllegalArgumentException e) {
                             throw new IllegalArgumentException("Invalid output value: " + value
-                                    + ". Must be one of: " + VALID_OUTPUTS);
+                                    + ". Must be one of: console, json");
                         }
-                        builder.output = value;
                         break;
                     case "top-n":
                         builder.topN = parsePositiveInt("top-n", value);
@@ -147,7 +152,7 @@ public class Args {
         return upgradeThreshold;
     }
 
-    public String getOutput() {
+    public OutputFormat getOutput() {
         return output;
     }
 
@@ -160,13 +165,13 @@ public class Args {
     }
 
     private static class Builder {
-        private String host = "localhost";
-        private int port = 6379;
+        private String host = MonitorConstants.DEFAULT_REDIS_HOST;
+        private int port = MonitorConstants.DEFAULT_REDIS_PORT;
         private int durationSec = 300;
         private int samplesPerPattern = 10;
         private int ttlSamplesPerPattern = 5;
         private int upgradeThreshold = 10;
-        private String output = "console";
+        private OutputFormat output = OutputFormat.CONSOLE;
         private int topN = 20;
         private String password = null;
     }

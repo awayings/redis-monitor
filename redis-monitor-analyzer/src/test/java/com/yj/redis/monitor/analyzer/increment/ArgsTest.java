@@ -14,7 +14,7 @@ public class ArgsTest {
         assertEquals(10, args.getSamplesPerPattern());
         assertEquals(5, args.getTtlSamplesPerPattern());
         assertEquals(10, args.getUpgradeThreshold());
-        assertEquals("console", args.getOutput());
+        assertEquals(OutputFormat.CONSOLE, args.getOutput());
         assertEquals(20, args.getTopN());
     }
 
@@ -40,7 +40,7 @@ public class ArgsTest {
     @Test
     public void testParseOutputJson() {
         Args args = Args.parse(new String[]{"--output=json"});
-        assertEquals("json", args.getOutput());
+        assertEquals(OutputFormat.JSON, args.getOutput());
     }
 
     @Test
@@ -67,7 +67,7 @@ public class ArgsTest {
         assertEquals(20, args.getSamplesPerPattern());
         assertEquals(10, args.getTtlSamplesPerPattern());
         assertEquals(5, args.getUpgradeThreshold());
-        assertEquals("json", args.getOutput());
+        assertEquals(OutputFormat.JSON, args.getOutput());
         assertEquals(10, args.getTopN());
     }
 

@@ -14,6 +14,10 @@ public class RedisConnectionFactory {
         this(host, port, 2000, 5000, null);
     }
 
+    public RedisConnectionFactory(String host, int port, String password) {
+        this(host, port, 2000, 5000, password);
+    }
+
     public RedisConnectionFactory(String host, int port, int connectionTimeoutMs,
                                    int socketTimeoutMs, String password) {
         this.host = host;

@@ -9,19 +9,15 @@ import java.util.concurrent.TimeUnit;
 
 public class TtlSampler extends Thread {
 
-    private final String host;
-    private final int port;
-    private final String password;
+    private final RedisConnectionFactory factory;
     private final PatternStatsAggregator aggregator;
     private final int maxTtlSamples;
     private final DelayQueue<DelayedTtlTask> delayQueue;
     private volatile boolean running;
 
-    public TtlSampler(String host, int port, PatternStatsAggregator aggregator, int maxTtlSamples, String password) {
+    public TtlSampler(RedisConnectionFactory factory, PatternStatsAggregator aggregator, int maxTtlSamples) {
         super("TtlSampler");
-        this.host = host;
-        this.port = port;
-        this.password = password;
+        this.factory = factory;
         this.aggregator = aggregator;
         this.maxTtlSamples = maxTtlSamples;
         this.delayQueue = new DelayQueue<>();
@@ -38,7 +34,6 @@ public class TtlSampler extends Thread {
 
     @Override
     public void run() {
-        RedisConnectionFactory factory = new RedisConnectionFactory(host, port, 2000, 5000, password);
         try (Jedis jedis = factory.createConnection()) {
             while (running) {
                 try {

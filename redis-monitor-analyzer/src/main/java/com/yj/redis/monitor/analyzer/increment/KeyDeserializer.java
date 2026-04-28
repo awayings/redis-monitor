@@ -8,6 +8,7 @@ import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
+import com.google.common.io.BaseEncoding;
 import java.nio.charset.StandardCharsets;
 
 public class KeyDeserializer {
@@ -87,14 +88,7 @@ public class KeyDeserializer {
         }
     }
 
-    /**
-     * Converts bytes to a hex string using "%02x" format per byte.
-     */
     private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b & 0xFF));
-        }
-        return sb.toString();
+        return BaseEncoding.base16().encode(bytes).toLowerCase();
     }
 }

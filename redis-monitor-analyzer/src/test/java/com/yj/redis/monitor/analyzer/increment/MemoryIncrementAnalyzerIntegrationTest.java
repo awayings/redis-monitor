@@ -592,7 +592,7 @@ public class MemoryIncrementAnalyzerIntegrationTest {
                 "--host=" + HOST, "--port=" + PORT, "--duration=1",
                 "--output=json", "--top-n=5"
         });
-        assertEquals("json", args.getOutput());
+        assertEquals(OutputFormat.JSON, args.getOutput());
     }
 
     // ========================================================================

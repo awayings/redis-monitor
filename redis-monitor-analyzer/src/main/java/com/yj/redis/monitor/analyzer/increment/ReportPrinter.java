@@ -1,5 +1,7 @@
 package com.yj.redis.monitor.analyzer.increment;
 
+import org.apache.commons.lang3.StringEscapeUtils;
+
 import java.io.PrintStream;
 import java.util.List;
 
@@ -65,10 +67,12 @@ public class ReportPrinter {
 
         // Total line
         out.println("------+--------------------------------+--------+----------+----------+------------+------------+------------");
-        double totalIncrement = topPatterns.stream()
-                .mapToDouble(PatternStats::getIncrementBytes).sum();
-        double totalBalanced = topPatterns.stream()
-                .mapToDouble(s -> s.getBalancedBytes(durationSec)).sum();
+        double totalIncrement = 0;
+        double totalBalanced = 0;
+        for (PatternStats s : topPatterns) {
+            totalIncrement += s.getIncrementBytes();
+            totalBalanced += s.getBalancedBytes(durationSec);
+        }
         String totalIncrementStr = formatBytes((long) totalIncrement);
         String totalBalancedStr = formatBytes((long) totalBalanced);
         out.printf("%-6s %-30s %-8d %-10s %-10s %-12s %-12s %-12s%n",
@@ -198,36 +202,6 @@ public class ReportPrinter {
         if (value == null) {
             return "\"\"";
         }
-        StringBuilder sb = new StringBuilder();
-        sb.append('"');
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '\\':
-                    sb.append("\\\\");
-                    break;
-                case '"':
-                    sb.append("\\\"");
-                    break;
-                case '\n':
-                    sb.append("\\n");
-                    break;
-                case '\r':
-                    sb.append("\\r");
-                    break;
-                case '\t':
-                    sb.append("\\t");
-                    break;
-                default:
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-                    break;
-            }
-        }
-        sb.append('"');
-        return sb.toString();
+        return '"' + StringEscapeUtils.escapeJson(value) + '"';
     }
 }

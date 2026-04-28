@@ -1,5 +1,6 @@
 package com.yj.redis.monitor.analyzer.increment;
 
+import com.yj.redis.monitor.core.RedisConnectionFactory;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,7 +19,7 @@ public class TtlSamplerTest {
     @Before
     public void setUp() {
         aggregator = new PatternStatsAggregator(5, 10);
-        sampler = new TtlSampler("localhost", 6379, aggregator, 5, null);
+        sampler = new TtlSampler(new RedisConnectionFactory("localhost", 6379, null), aggregator, 5);
     }
 
     @After

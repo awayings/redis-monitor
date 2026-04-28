@@ -32,10 +32,9 @@ public class MemoryIncrementAnalyzer {
                 args.getDurationSec(), args.getSamplesPerPattern());
         this.noTtlStore = new NoTtlKeyStore();
         this.sampleQueue = new LinkedBlockingQueue<>();
-        this.memorySampler = new MemorySamplerThread(args.getHost(), args.getPort(), sampleQueue, args.getPassword());
-        this.ttlSampler = new TtlSampler(args.getHost(), args.getPort(),
-                aggregator, args.getTtlSamplesPerPattern(), args.getPassword());
-        this.factory = new RedisConnectionFactory(args.getHost(), args.getPort(), 2000, 5000, args.getPassword());
+        this.factory = new RedisConnectionFactory(args.getHost(), args.getPort(), args.getPassword());
+        this.memorySampler = new MemorySamplerThread(factory, sampleQueue);
+        this.ttlSampler = new TtlSampler(factory, aggregator, args.getTtlSamplesPerPattern());
         this.interrupted = false;
         this.reportPrinted = false;
     }
@@ -144,12 +143,9 @@ public class MemoryIncrementAnalyzer {
                 String key = cmd.getKey();
                 sampleQueue.offer(new SampleTask(key, memory -> aggregator.addMemorySample(pattern, memory)));
             }
-        } else {
-            // TTL-only commands: add TTL sample without incrementing writeCount
-            if (cmd.getTtlMillis() != null) {
-                aggregator.addTtlSample(pattern, cmd.getTtlMillis());
-                aggregator.markTtlFromCommand(pattern);
-            }
+        } else if (cmd.getTtlMillis() != null) {
+            aggregator.addTtlSample(pattern, cmd.getTtlMillis());
+            aggregator.markTtlFromCommand(pattern);
         }
     }
 
@@ -175,7 +171,7 @@ public class MemoryIncrementAnalyzer {
         }
 
         PrintStream out = System.out;
-        if ("json".equals(args.getOutput())) {
+        if (args.getOutput() == OutputFormat.JSON) {
             printer.printJson(aggregator, noTtlStore, args.getTopN(), out);
         } else {
             printer.printConsole(aggregator, noTtlStore, args.getTopN(), out);

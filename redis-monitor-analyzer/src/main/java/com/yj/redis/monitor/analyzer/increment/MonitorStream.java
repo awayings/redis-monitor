@@ -9,13 +9,11 @@ public class MonitorStream implements AutoCloseable {
     private final Jedis jedis;
     private final int durationSec;
     private volatile boolean running;
-    private volatile boolean connected;
 
     public MonitorStream(Jedis jedis, int durationSec) {
         this.jedis = jedis;
         this.durationSec = durationSec;
         this.running = true;
-        this.connected = true;
     }
 
     /**
@@ -42,7 +40,6 @@ public class MonitorStream implements AutoCloseable {
             }
         } finally {
             running = false;
-            connected = false;
         }
     }
 

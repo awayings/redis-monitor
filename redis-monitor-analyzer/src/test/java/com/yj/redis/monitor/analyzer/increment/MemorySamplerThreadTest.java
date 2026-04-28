@@ -1,5 +1,6 @@
 package com.yj.redis.monitor.analyzer.increment;
 
+import com.yj.redis.monitor.core.RedisConnectionFactory;
 import org.junit.Test;
 
 import java.util.concurrent.BlockingQueue;
@@ -12,7 +13,8 @@ public class MemorySamplerThreadTest {
     @Test
     public void testThreadProcessesTask() throws Exception {
         BlockingQueue<SampleTask> queue = new LinkedBlockingQueue<>();
-        MemorySamplerThread thread = new MemorySamplerThread("localhost", 6379, queue, null);
+        MemorySamplerThread thread = new MemorySamplerThread(
+                new RedisConnectionFactory("localhost", 6379, null), queue);
         thread.start();
         assertTrue(thread.isAlive());
         thread.shutdown();
@@ -23,7 +25,8 @@ public class MemorySamplerThreadTest {
     @Test
     public void testShutdownStopsThread() throws Exception {
         BlockingQueue<SampleTask> queue = new LinkedBlockingQueue<>();
-        MemorySamplerThread thread = new MemorySamplerThread("localhost", 6379, queue, null);
+        MemorySamplerThread thread = new MemorySamplerThread(
+                new RedisConnectionFactory("localhost", 6379, null), queue);
         thread.start();
         assertTrue(thread.isAlive());
         thread.shutdown();
