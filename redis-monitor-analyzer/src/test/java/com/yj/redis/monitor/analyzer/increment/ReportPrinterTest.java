@@ -12,9 +12,9 @@ public class ReportPrinterTest {
     @Test
     public void testConsoleReportContainsPatternName() {
         PatternStatsAggregator aggregator = new PatternStatsAggregator(5, 10);
-        aggregator.recordWrite("user:*:profile", 0);
+        aggregator.recordWrite("user:*:profile");
         aggregator.addMemorySample("user:*:profile", 1024);
-        aggregator.recordWrite("user:*:profile", 0);
+        aggregator.recordWrite("user:*:profile");
 
         NoTtlKeyStore noTtlStore = new NoTtlKeyStore();
         ReportPrinter printer = new ReportPrinter("localhost", 6379, 60, 10);
@@ -49,7 +49,7 @@ public class ReportPrinterTest {
     @Test
     public void testJsonReportValid() {
         PatternStatsAggregator aggregator = new PatternStatsAggregator(5, 10);
-        aggregator.recordWrite("user:*:profile", 0);
+        aggregator.recordWrite("user:*:profile");
         aggregator.addMemorySample("user:*:profile", 2048);
 
         NoTtlKeyStore noTtlStore = new NoTtlKeyStore();

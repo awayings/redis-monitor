@@ -8,7 +8,7 @@ public class Args {
 
     private static final Set<String> VALID_KEYS = new HashSet<>(Arrays.asList(
             "host", "port", "duration", "samples-per-pattern",
-            "ttl-samples-per-pattern", "upgrade-threshold", "output", "top-n"
+            "ttl-samples-per-pattern", "upgrade-threshold", "output", "top-n", "password"
     ));
 
     private static final Set<String> VALID_OUTPUTS = new HashSet<>(Arrays.asList("console", "json"));
@@ -21,6 +21,7 @@ public class Args {
     private final int upgradeThreshold;
     private final String output;
     private final int topN;
+    private final String password;
 
     private Args(Builder builder) {
         this.host = builder.host;
@@ -31,6 +32,7 @@ public class Args {
         this.upgradeThreshold = builder.upgradeThreshold;
         this.output = builder.output;
         this.topN = builder.topN;
+        this.password = builder.password;
     }
 
     /**
@@ -84,6 +86,9 @@ public class Args {
                         break;
                     case "top-n":
                         builder.topN = parsePositiveInt("top-n", value);
+                        break;
+                    case "password":
+                        builder.password = value;
                         break;
                     default:
                         throw new IllegalArgumentException("Unknown argument: --" + key);
@@ -150,6 +155,10 @@ public class Args {
         return topN;
     }
 
+    public String getPassword() {
+        return password;
+    }
+
     private static class Builder {
         private String host = "localhost";
         private int port = 6379;
@@ -159,5 +168,6 @@ public class Args {
         private int upgradeThreshold = 10;
         private String output = "console";
         private int topN = 20;
+        private String password = null;
     }
 }

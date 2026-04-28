@@ -124,7 +124,7 @@ public class CommandParser {
             }
 
             if ("SET".equals(cmd)) {
-                // SET key value [EX seconds|PX milliseconds|...]
+                // SET key value [EX seconds|PX milliseconds|EXAT timestamp-sec|PXAT timestamp-ms]
                 for (int i = 2; i < tokens.size() - 1; i++) {
                     String arg = tokens.get(i);
                     if ("EX".equals(arg)) {
@@ -133,6 +133,14 @@ public class CommandParser {
                     }
                     if ("PX".equals(arg)) {
                         return Long.parseLong(tokens.get(i + 1));
+                    }
+                    if ("EXAT".equals(arg)) {
+                        long absSec = Long.parseLong(tokens.get(i + 1));
+                        return Math.max(0, absSec * 1000 - System.currentTimeMillis());
+                    }
+                    if ("PXAT".equals(arg)) {
+                        long absMs = Long.parseLong(tokens.get(i + 1));
+                        return Math.max(0, absMs - System.currentTimeMillis());
                     }
                 }
             }
@@ -155,9 +163,9 @@ public class CommandParser {
                 case "PEXPIRE":
                     return value;
                 case "EXPIREAT":
-                    return value * 1000 - System.currentTimeMillis();
+                    return Math.max(0, value * 1000 - System.currentTimeMillis());
                 case "PEXPIREAT":
-                    return value - System.currentTimeMillis();
+                    return Math.max(0, value - System.currentTimeMillis());
                 default:
                     return null;
             }

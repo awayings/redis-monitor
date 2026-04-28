@@ -11,15 +11,17 @@ public class TtlSampler extends Thread {
 
     private final String host;
     private final int port;
+    private final String password;
     private final PatternStatsAggregator aggregator;
     private final int maxTtlSamples;
     private final DelayQueue<DelayedTtlTask> delayQueue;
     private volatile boolean running;
 
-    public TtlSampler(String host, int port, PatternStatsAggregator aggregator, int maxTtlSamples) {
+    public TtlSampler(String host, int port, PatternStatsAggregator aggregator, int maxTtlSamples, String password) {
         super("TtlSampler");
         this.host = host;
         this.port = port;
+        this.password = password;
         this.aggregator = aggregator;
         this.maxTtlSamples = maxTtlSamples;
         this.delayQueue = new DelayQueue<>();
@@ -36,7 +38,7 @@ public class TtlSampler extends Thread {
 
     @Override
     public void run() {
-        RedisConnectionFactory factory = new RedisConnectionFactory(host, port, 2000, 5000, null);
+        RedisConnectionFactory factory = new RedisConnectionFactory(host, port, 2000, 5000, password);
         try (Jedis jedis = factory.createConnection()) {
             while (running) {
                 try {
@@ -73,7 +75,8 @@ public class TtlSampler extends Thread {
         try {
             long ttl = jedis.ttl(task.getKey());
             // Redis TTL: -1 = persistent (no TTL), -2 = key doesn't exist
-            if (ttl >= 0) {
+            if (ttl != -2) {
+                // -1 = persistent (no TTL), >= 0 = TTL in seconds
                 aggregator.addTtlSample(task.getPattern(), ttl * 1000);
             }
         } catch (Exception e) {

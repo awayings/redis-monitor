@@ -9,13 +9,15 @@ public class MemorySamplerThread extends Thread {
 
     private final String host;
     private final int port;
+    private final String password;
     private final BlockingQueue<SampleTask> queue;
     private volatile boolean running;
 
-    public MemorySamplerThread(String host, int port, BlockingQueue<SampleTask> queue) {
+    public MemorySamplerThread(String host, int port, BlockingQueue<SampleTask> queue, String password) {
         super("MemorySampler");
         this.host = host;
         this.port = port;
+        this.password = password;
         this.queue = queue;
         this.running = true;
         setDaemon(true);
@@ -23,7 +25,7 @@ public class MemorySamplerThread extends Thread {
 
     @Override
     public void run() {
-        RedisConnectionFactory factory = new RedisConnectionFactory(host, port, 2000, 5000, null);
+        RedisConnectionFactory factory = new RedisConnectionFactory(host, port, 2000, 5000, password);
         try (Jedis jedis = factory.createConnection()) {
             while (running) {
                 try {

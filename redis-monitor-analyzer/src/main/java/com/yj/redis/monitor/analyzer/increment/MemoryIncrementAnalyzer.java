@@ -32,10 +32,10 @@ public class MemoryIncrementAnalyzer {
                 args.getDurationSec(), args.getSamplesPerPattern());
         this.noTtlStore = new NoTtlKeyStore();
         this.sampleQueue = new LinkedBlockingQueue<>();
-        this.memorySampler = new MemorySamplerThread(args.getHost(), args.getPort(), sampleQueue);
+        this.memorySampler = new MemorySamplerThread(args.getHost(), args.getPort(), sampleQueue, args.getPassword());
         this.ttlSampler = new TtlSampler(args.getHost(), args.getPort(),
-                aggregator, args.getTtlSamplesPerPattern());
-        this.factory = new RedisConnectionFactory(args.getHost(), args.getPort(), 2000, 5000, null);
+                aggregator, args.getTtlSamplesPerPattern(), args.getPassword());
+        this.factory = new RedisConnectionFactory(args.getHost(), args.getPort(), 2000, 5000, args.getPassword());
         this.interrupted = false;
         this.reportPrinted = false;
     }
@@ -126,20 +126,30 @@ public class MemoryIncrementAnalyzer {
         }
 
         String pattern = clusterer.cluster(cmd.getKey());
-        aggregator.recordWrite(pattern, 0);
 
-        if (cmd.getTtlMillis() != null) {
-            aggregator.addTtlSample(pattern, cmd.getTtlMillis());
-            aggregator.markTtlFromCommand(pattern);
+        if (cmd.isWriteCommand()) {
+            aggregator.recordWrite(pattern);
+            aggregator.setRepresentativeKeyIfAbsent(pattern, cmd.getKey());
+
+            if (cmd.getTtlMillis() != null) {
+                aggregator.addTtlSample(pattern, cmd.getTtlMillis());
+                aggregator.markTtlFromCommand(pattern);
+            } else {
+                ttlSampler.scheduleDelayedTtl(cmd.getKey(), pattern);
+            }
+
+            // Enqueue for memory sampling if pattern hasn't reached quota
+            PatternStats stats = aggregator.getStats(pattern);
+            if (stats != null && stats.getMemorySampleCount() < args.getSamplesPerPattern()) {
+                String key = cmd.getKey();
+                sampleQueue.offer(new SampleTask(key, memory -> aggregator.addMemorySample(pattern, memory)));
+            }
         } else {
-            ttlSampler.scheduleDelayedTtl(cmd.getKey(), pattern);
-        }
-
-        // Enqueue for memory sampling if pattern hasn't reached quota
-        PatternStats stats = aggregator.getStats(pattern);
-        if (stats != null && stats.getMemorySampleCount() < args.getSamplesPerPattern()) {
-            String key = cmd.getKey();
-            sampleQueue.offer(new SampleTask(key, memory -> aggregator.addMemorySample(pattern, memory)));
+            // TTL-only commands: add TTL sample without incrementing writeCount
+            if (cmd.getTtlMillis() != null) {
+                aggregator.addTtlSample(pattern, cmd.getTtlMillis());
+                aggregator.markTtlFromCommand(pattern);
+            }
         }
     }
 
@@ -156,9 +166,10 @@ public class MemoryIncrementAnalyzer {
         // Move patterns with no TTL to the noTtlStore
         for (PatternStats stats : aggregator.getAllStats()) {
             if (!stats.getTtlSamples().isEmpty() && stats.getAvgTtlSeconds() <= 0) {
-                // Use the first few memory samples for reporting
                 long memoryBytes = (long) stats.getAvgMemoryBytes();
-                noTtlStore.offer(stats.getPattern(), stats.getPattern(),
+                String repKey = stats.getRepresentativeKey() != null
+                        ? stats.getRepresentativeKey() : stats.getPattern();
+                noTtlStore.offer(repKey, stats.getPattern(),
                         memoryBytes, "TTL");
             }
         }
@@ -206,5 +217,6 @@ public class MemoryIncrementAnalyzer {
         out.println("  --upgrade-threshold=<n>    Pattern upgrade threshold (default: 10)");
         out.println("  --top-n=<n>                Top N patterns to report (default: 20)");
         out.println("  --output=<console|json>    Output format (default: console)");
+        out.println("  --password=<password>      Redis password (default: none)");
     }
 }

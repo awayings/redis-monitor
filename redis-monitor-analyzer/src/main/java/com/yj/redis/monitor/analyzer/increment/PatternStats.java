@@ -7,6 +7,7 @@ public class PatternStats {
     private final ReservoirSampler<Long> ttlSamples;
     private final ReservoirSampler<Long> memorySamples;
     private boolean hasTtlFromCommand;
+    private String representativeKey;
 
     public PatternStats(String pattern, int ttlSampleCapacity, int memorySampleCapacity) {
         this.pattern = pattern;
@@ -98,5 +99,13 @@ public class PatternStats {
      */
     public int getMemorySampleCount() {
         return memorySamples.size();
+    }
+
+    public String getRepresentativeKey() {
+        return representativeKey;
+    }
+
+    public void setRepresentativeKey(String representativeKey) {
+        this.representativeKey = representativeKey;
     }
 }

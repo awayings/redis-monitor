@@ -202,12 +202,29 @@ public class ReportPrinter {
         sb.append('"');
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
-            if (c == '\\') {
-                sb.append("\\\\");
-            } else if (c == '"') {
-                sb.append("\\\"");
-            } else {
-                sb.append(c);
+            switch (c) {
+                case '\\':
+                    sb.append("\\\\");
+                    break;
+                case '"':
+                    sb.append("\\\"");
+                    break;
+                case '\n':
+                    sb.append("\\n");
+                    break;
+                case '\r':
+                    sb.append("\\r");
+                    break;
+                case '\t':
+                    sb.append("\\t");
+                    break;
+                default:
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                    break;
             }
         }
         sb.append('"');

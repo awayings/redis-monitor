@@ -19,13 +19,24 @@ public class PatternStatsAggregator {
     }
 
     /**
-     * Records a write operation for the given pattern with memory usage in bytes.
+     * Records a write operation for the given pattern.
      * Creates a new PatternStats entry if one does not exist.
      */
-    public void recordWrite(String pattern, long memoryBytes) {
+    public void recordWrite(String pattern) {
         PatternStats stats = statsMap.computeIfAbsent(pattern,
                 p -> new PatternStats(p, ttlSampleCapacity, memorySampleCapacity));
         stats.incrementWriteCount();
+    }
+
+    /**
+     * Sets the representative key for a pattern if none is set yet.
+     * The first key seen for a pattern becomes its representative.
+     */
+    public void setRepresentativeKeyIfAbsent(String pattern, String key) {
+        PatternStats stats = statsMap.get(pattern);
+        if (stats != null && stats.getRepresentativeKey() == null) {
+            stats.setRepresentativeKey(key);
+        }
     }
 
     /**
