@@ -10,7 +10,14 @@ public class ReservoirSampler<T extends Number> {
     private final List<T> samples;
     private int totalSeen;
 
+    /**
+     * @param capacity maximum number of samples to retain, must be positive
+     * @throws IllegalArgumentException if capacity is not positive
+     */
     public ReservoirSampler(int capacity) {
+        if (capacity <= 0) {
+            throw new IllegalArgumentException("Capacity must be positive, got: " + capacity);
+        }
         this.capacity = capacity;
         this.samples = new ArrayList<>(capacity);
         this.totalSeen = 0;
@@ -36,6 +43,9 @@ public class ReservoirSampler<T extends Number> {
         return samples.isEmpty();
     }
 
+    /**
+     * @return arithmetic mean of stored samples, or 0.0 if the sampler is empty
+     */
     public double mean() {
         if (samples.isEmpty()) {
             return 0.0;
