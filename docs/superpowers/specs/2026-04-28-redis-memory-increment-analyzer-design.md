@@ -171,8 +171,45 @@ class PatternClusterState {
 **Upgrade rule:**
 When a FIXED segment has seen `UPGRADE_THRESHOLD` (default 10) distinct values, upgrade to variable (`*`).
 
-**No-colon keys:**
-- All collected into a single pattern `*`.
+**No-colon keys — Incremental LCS Clustering:**
+
+For keys without `:` delimiter, we use an **incremental Longest Common Substring (LCS)** clustering algorithm instead of a single catch-all bucket.
+
+**Data structure:**
+```java
+class NoColonClusterState {
+    String commonSubstring;  // LCS of all keys in this cluster
+    int keyCount;
+}
+```
+
+**Processing a new no-colon key:**
+1. Iterate all existing `NoColonClusterState` clusters.
+2. Compute LCS length between the new key and each `cluster.commonSubstring`.
+3. If max LCS length ≥ `MIN_LCS_LENGTH` (default 4):
+   - Merge the key into that cluster.
+   - Update `cluster.commonSubstring = LCS(newKey, cluster.commonSubstring)`.
+   - Increment `cluster.keyCount`.
+4. If no cluster matches:
+   - Create new `NoColonClusterState` with `commonSubstring = key`, `keyCount = 1`.
+
+**Finalization (at report time):**
+- Clusters with `keyCount ≥ UPGRADE_THRESHOLD` (default 10): output `commonSubstring` as the pattern.
+- Clusters with `keyCount < UPGRADE_THRESHOLD`: merge into the catch-all pattern `*`.
+
+**Example:**
+```
+Keys seen: "user_profile_1001", "user_profile_1002", "user_profile_2001"
+Cluster 1 commonSubstring evolution:
+  "user_profile_1001" (initial)
+  → LCS("user_profile_1001", "user_profile_1002") = "user_profile_100"
+  → LCS("user_profile_100", "user_profile_2001") = "user_profile_"
+Final pattern: "user_profile_" (if keyCount ≥ threshold)
+```
+
+**Unclusterable keys:**
+- If a cluster never reaches `UPGRADE_THRESHOLD`, its keys are merged into the fallback pattern `*`.
+- Keys that fail all deserialization attempts (hex fallback) also land in `*`.
 
 **Pattern output format:**
 - Variable segments rendered as `*`.
