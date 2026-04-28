@@ -79,24 +79,18 @@ Single-threaded main pipeline for MONITOR parsing + aggregation. One additional 
 
 **Tracked commands:**
 
-All commands that write keys are tracked. TTL is handled uniformly via sampling (see 3.5 TtlSampler).
+| Category | Commands |
+|----------|----------|
+| Write with inline TTL | `SET key val [EX/PX/EXAT/PXAT]`, `SETEX key seconds val`, `PSETEX key ms val` |
+| Write without TTL | `SETNX key val`, `GETSET key val`, `MSET k1 v1 ...`, `HSET key f1 v1 ...`, `HMSET key f1 v1 ...`, `HSETNX key f v`, `SADD key m1 ...`, `ZADD key ...`, `RESTORE key ttl serialized` |
+| TTL-only (no write) | `EXPIRE key seconds`, `PEXPIRE key ms`, `EXPIREAT key timestamp`, `PEXPIREAT key ms-timestamp` |
 
-| Command |
-|---------|
-| `SET key val [EX/PX/EXAT/PXAT]` |
-| `SETEX key seconds val` |
-| `PSETEX key ms val` |
-| `SETNX key val` |
-| `GETSET key val` |
-| `MSET k1 v1 [k2 v2 ...]` |
-| `HSET key f1 v1 [f2 v2 ...]` |
-| `HMSET key f1 v1 [f2 v2 ...]` |
-| `HSETNX key f v` |
-| `SADD key m1 [m2 ...]` |
-| `ZADD key [opts] s1 m1 [s2 m2 ...]` |
-| `RESTORE key ttl serialized` |
+**TTL extraction strategy:**
+- Commands with inline TTL (`SETEX`, `SET ... EX`, etc.): parse TTL directly from arguments.
+- TTL-only commands (`EXPIRE`, `PEXPIRE`, etc.): parse TTL directly from arguments.
+- Write commands without TTL arguments: defer to `TtlSampler` with delayed query (see 3.7).
 
-**Design note:** We do NOT distinguish "new key creation" from "overwrite of existing key". All write commands increment the pattern's `writeCount`.
+**Design note:** We do NOT distinguish "new key creation" from "overwrite of existing key". All write commands increment the pattern's `writeCount`. `EXPIRE`-family commands do NOT increment `writeCount` (they do not write key data).
 
 ### 3.3 KeyDeserializer
 
@@ -345,18 +339,58 @@ class MemorySamplerThread extends Thread {
 
 ### 3.7 TtlSampler
 
-Runs in the **main thread** (lightweight `TTL` queries are fast enough to not need async).
+Two paths feed into TTL sampling: direct extraction from command arguments, and delayed query for commands without inline TTL.
 
-**Strategy:** Per-pattern fixed count, same as memory sampling.
-- Configurable: `--ttl-samples-per-pattern` (default 5).
-- When a write command is parsed and the pattern has not yet collected 5 TTL samples:
-  - Main thread issues `jedis.ttl(key)` synchronously.
-  - Result is added to the pattern's `ttlSamples` reservoir.
-- Once a pattern reaches the limit, no more `TTL` queries for that pattern.
+#### Path A: Direct extraction (inline TTL commands)
+
+When the `CommandParser` sees a command that carries TTL in its arguments, the TTL value is extracted immediately and added to the pattern's `ttlSamples` reservoir.
+
+**Sources for direct extraction:**
+- `SETEX` / `PSETEX` / `SET ... EX|PX|EXAT|PXAT` — parse TTL from the command itself
+- `EXPIRE` / `PEXPIRE` / `EXPIREAT` / `PEXPIREAT` — parse TTL / timestamp from the command itself
+
+Once a pattern has received TTL from direct extraction, it is marked (`hasTtlFromCommand = true`).
+
+#### Path B: Delayed query (write commands without inline TTL)
+
+For write commands that do not carry TTL arguments (e.g. plain `SET`, `HSET`, `SADD`), the system cannot know the TTL at command-parse time. Instead of querying immediately, the key is placed into a **per-pattern delay queue** and queried later.
+
+**Why delay?** In production, clients often send `SET` followed by `EXPIRE` in a pipeline. An immediate `TTL` query would see -1 because `EXPIRE` has not yet reached Redis. A ~1 second delay lets the pipeline settle.
+
+**Delayed-query thread workflow:**
+
+```
+For each (key, pattern) that reaches its delay deadline:
+    If pattern.ttlSamples is already full:
+        Discard the task — no query issued.
+    Else if pattern.hasTtlFromCommand == true:
+        Discard the task — avoid a -1 sample polluting
+        TTL values already obtained from EXPIRE/SETEX.
+    Else:
+        Issue TTL key to Redis.
+        If result > 0:
+            Add to pattern.ttlSamples.
+        Else if result == -1 (no expiry):
+            Add to pattern.ttlSamples as "no TTL" indicator.
+        Else if result == -2 (key gone):
+            Ignore — key was deleted or evicted during the delay.
+```
+
+**Key discard rules summarized:**
+
+| Condition at delay expiry | Action | Rationale |
+|---------------------------|--------|-----------|
+| Pattern's TTL reservoir is full | Skip query | Sampling quota already met |
+| Pattern already has TTL from direct extraction | Skip query | Prevent -1 from plain SET/HSET from diluting known TTL |
+| Neither above | Execute `TTL key` | Genuine unknown — determine whether key has expiry |
+
+#### No-TTL handling
+
+If a pattern's TTL samples average to ≤ 0 (all samples indicate no expiry), the pattern is treated as "no TTL":
+- `balancedBytes` is not computed for this pattern.
+- A representative key is added to `NoTtlKeyStore` (see 3.8).
 
 **Assumption:** All keys within the same pattern share the same TTL. The sampled TTL is used for all writes in that pattern when computing `balancedBytes`.
-
-**No-TTL handling:** If `TTL` returns -1 (no expiry), that sample is still stored. If the average of TTL samples for a pattern is ≤ 0, the pattern is treated as "no TTL".
 
 ### 3.8 NoTtlKeyStore
 
