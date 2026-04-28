@@ -171,44 +171,71 @@ class PatternClusterState {
 **Upgrade rule:**
 When a FIXED segment has seen `UPGRADE_THRESHOLD` (default 10) distinct values, upgrade to variable (`*`).
 
-**No-colon keys — Incremental LCS Clustering:**
+**No-colon keys — Prefix Trie Clustering:**
 
-For keys without `:` delimiter, we use an **incremental Longest Common Substring (LCS)** clustering algorithm instead of a single catch-all bucket.
+For keys without `:` delimiter, we use a **Prefix Trie** for clustering instead of a single catch-all bucket. Trie is preferred over LCS because:
+- LCS may match arbitrary middle substrings (e.g., "X" from "abcXdef" / "ghiXjkl") which have no semantic meaning as a Redis key pattern.
+- Prefix Trie naturally captures the leading business prefix (e.g., `user_profile_`), which is the meaningful pattern in Redis naming conventions.
+- Insertion and pattern extraction are O(key length), much faster than LCS.
 
 **Data structure:**
 ```java
-class NoColonClusterState {
-    String commonSubstring;  // LCS of all keys in this cluster
-    int keyCount;
+class PrefixTrie {
+    TrieNode root = new TrieNode();
+
+    class TrieNode {
+        Map<Character, TrieNode> children = new HashMap<>();
+        int count = 0;  // how many keys pass through this node
+    }
+
+    void insert(String key) {
+        TrieNode node = root;
+        for (char c : key.toCharArray()) {
+            node = node.children.computeIfAbsent(c, k -> new TrieNode());
+            node.count++;
+        }
+    }
 }
 ```
 
-**Processing a new no-colon key:**
-1. Iterate all existing `NoColonClusterState` clusters.
-2. Compute LCS length between the new key and each `cluster.commonSubstring`.
-3. If max LCS length ≥ `MIN_LCS_LENGTH` (default 4):
-   - Merge the key into that cluster.
-   - Update `cluster.commonSubstring = LCS(newKey, cluster.commonSubstring)`.
-   - Increment `cluster.keyCount`.
-4. If no cluster matches:
-   - Create new `NoColonClusterState` with `commonSubstring = key`, `keyCount = 1`.
+**Pattern extraction (at report time):**
+DFS from root with `UPGRADE_THRESHOLD` (default 10):
 
-**Finalization (at report time):**
-- Clusters with `keyCount ≥ UPGRADE_THRESHOLD` (default 10): output `commonSubstring` as the pattern.
-- Clusters with `keyCount < UPGRADE_THRESHOLD`: merge into the catch-all pattern `*`.
+```
+extractPatterns(node, prefix):
+    for each (char c, child) in node.children:
+        if child.count >= UPGRADE_THRESHOLD:
+            newPrefix = prefix + c
+            if child has >= 2 children OR all grandchildren < threshold:
+                // Branch point or end of high-frequency chain → cut here
+                output pattern: newPrefix + "*"
+                // All keys under this subtree belong to this pattern
+            else:
+                extractPatterns(child, newPrefix)
+```
+
+**Cut conditions (match any):**
+1. **Branch point:** node has ≥ 2 children with count ≥ threshold. Example: `user_profile_` → children `1`(count=2), `2`(count=1). Cut at `user_profile_*`.
+2. **End of chain:** node.count ≥ threshold, but all children count < threshold. Cut here.
+3. **Leaf node:** reached the end of a key. Cut here (exact key match).
 
 **Example:**
 ```
-Keys seen: "user_profile_1001", "user_profile_1002", "user_profile_2001"
-Cluster 1 commonSubstring evolution:
-  "user_profile_1001" (initial)
-  → LCS("user_profile_1001", "user_profile_1002") = "user_profile_100"
-  → LCS("user_profile_100", "user_profile_2001") = "user_profile_"
-Final pattern: "user_profile_" (if keyCount ≥ threshold)
+Keys: "user_profile_1001", "user_profile_1002", "user_profile_2001"
+
+Trie:
+u(3) → s(3) → e(3) → r(3) → _(3) → p(3) → r(3) → o(3) → f(3) → i(3) → l(3) → e(3) → _(3)
+                                                                          │
+                                                                          ├── 1(2) → 0(2) → 0(2) → 1(1)
+                                                                          │
+                                                                          └── 2(1) → 0(1) → 0(1) → 1(1)
+
+At "user_profile_" (count=3 ≥ 10? No, 3 < 10 with default threshold).
+If threshold=2: count=3 ≥ 2, and has 2 children → branch point → pattern: "user_profile_*"
 ```
 
 **Unclusterable keys:**
-- If a cluster never reaches `UPGRADE_THRESHOLD`, its keys are merged into the fallback pattern `*`.
+- Keys not belonging to any extracted pattern (subtree count < threshold) are merged into the fallback pattern `*`.
 - Keys that fail all deserialization attempts (hex fallback) also land in `*`.
 
 **Pattern output format:**
