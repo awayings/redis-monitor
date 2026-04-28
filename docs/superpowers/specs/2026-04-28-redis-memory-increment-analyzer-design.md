@@ -79,20 +79,22 @@ Single-threaded main pipeline for MONITOR parsing + aggregation. One additional 
 
 **Tracked commands:**
 
-| Command | TTL Source |
-|---------|-----------|
-| `SET key val [EX/PX/EXAT/PXAT]` | Arguments |
-| `SETEX key seconds val` | `seconds` argument |
-| `PSETEX key ms val` | `ms` argument |
-| `SETNX key val` | None |
-| `GETSET key val` | None |
-| `MSET k1 v1 [k2 v2 ...]` | None |
-| `HSET key f1 v1 [f2 v2 ...]` | None |
-| `HMSET key f1 v1 [f2 v2 ...]` | None |
-| `HSETNX key f v` | None |
-| `SADD key m1 [m2 ...]` | None |
-| `ZADD key [opts] s1 m1 [s2 m2 ...]` | None |
-| `RESTORE key ttl serialized` | `ttl` argument |
+All commands that write keys are tracked. TTL is handled uniformly via sampling (see 3.5 TtlSampler).
+
+| Command |
+|---------|
+| `SET key val [EX/PX/EXAT/PXAT]` |
+| `SETEX key seconds val` |
+| `PSETEX key ms val` |
+| `SETNX key val` |
+| `GETSET key val` |
+| `MSET k1 v1 [k2 v2 ...]` |
+| `HSET key f1 v1 [f2 v2 ...]` |
+| `HMSET key f1 v1 [f2 v2 ...]` |
+| `HSETNX key f v` |
+| `SADD key m1 [m2 ...]` |
+| `ZADD key [opts] s1 m1 [s2 m2 ...]` |
+| `RESTORE key ttl serialized` |
 
 **Design note:** We do NOT distinguish "new key creation" from "overwrite of existing key". All write commands increment the pattern's `writeCount`.
 
@@ -148,9 +150,8 @@ Central in-memory store for all statistics.
 class PatternStats {
     String pattern;
     long writeCount;                    // total writes during monitor period
-    long ttlWriteCount;                 // writes with explicit TTL
-    long ttlSumMs;                      // sum of TTLs (only for ttlWriteCount)
-    ReservoirSampler<Long> memorySamples; // fixed-size reservoir (default 100)
+    ReservoirSampler<Long> ttlSamples;  // fixed-size TTL reservoir (default 5)
+    ReservoirSampler<Long> memorySamples; // fixed-size memory reservoir (default 10)
 }
 ```
 
@@ -159,12 +160,12 @@ class PatternStats {
 | Field | Formula |
 |-------|---------|
 | `writeRatePerSecond` | `writeCount / durationSec` |
-| `avgTtlSeconds` | `ttlWriteCount > 0 ? (ttlSumMs / 1000.0 / ttlWriteCount) : 0` |
+| `avgTtlSeconds` | `ttlSamples.mean() / 1000.0` (if ttlSamples not empty) |
 | `avgMemoryBytes` | `memorySamples.mean()` |
 | **`incrementBytes`** | **`writeCount * avgMemoryBytes`** |
-| `balancedBytes` | `writeRatePerSecond * avgTtlSeconds * avgMemoryBytes` (only if avgTtl > 0) |
+| `balancedBytes` | `writeRatePerSecond * avgTtlSeconds * avgMemoryBytes` (only if ttlSamples not empty) |
 
-**Assumption:** We assume expiration rate ≈ write rate (balanced state assumption). This is used only for the `balancedBytes` reference value. The primary output metric is `incrementBytes`.
+**Assumption:** We assume all keys within the same pattern share the same TTL. The `avgTtlSeconds` is computed from a small fixed-size sample per pattern. We also assume expiration rate ≈ write rate for the `balancedBytes` reference value. The primary output metric is `incrementBytes`.
 
 ### 3.5 MemorySamplerThread
 
@@ -189,13 +190,28 @@ class MemorySamplerThread extends Thread {
 
 **Sampling strategy:** Per-pattern fixed count (NOT percentage).
 - Configurable: `--samples-per-pattern` (default 10).
-- Each pattern tracks how many samples have been taken.
+- Each pattern tracks how many memory samples have been taken.
 - Once a pattern reaches the limit, no more `MEMORY USAGE` queries for that pattern.
 - This caps Redis load at: `number_of_patterns * samples_per_pattern`.
 
-### 3.6 NoTtlKeyStore
+### 3.6 TtlSampler
 
-Retains up to 5 examples of keys written **without TTL**.
+Runs in the **main thread** (lightweight `TTL` queries are fast enough to not need async).
+
+**Strategy:** Per-pattern fixed count, same as memory sampling.
+- Configurable: `--ttl-samples-per-pattern` (default 5).
+- When a write command is parsed and the pattern has not yet collected 5 TTL samples:
+  - Main thread issues `jedis.ttl(key)` synchronously.
+  - Result is added to the pattern's `ttlSamples` reservoir.
+- Once a pattern reaches the limit, no more `TTL` queries for that pattern.
+
+**Assumption:** All keys within the same pattern share the same TTL. The sampled TTL is used for all writes in that pattern when computing `balancedBytes`.
+
+**No-TTL handling:** If `TTL` returns -1 (no expiry), that sample is still stored. If the average of TTL samples for a pattern is ≤ 0, the pattern is treated as "no TTL".
+
+### 3.7 NoTtlKeyStore
+
+Retains up to 5 examples of keys from **patterns with no TTL**.
 
 ```java
 class NoTtlKeyStore {
@@ -209,10 +225,10 @@ class NoTtlKeyStore {
 }
 ```
 
-When a key is written without TTL:
-1. Increment the pattern's `writeCount` (normal flow).
-2. Do NOT increment `ttlWriteCount` or `ttlSumMs`.
-3. Add to `NoTtlKeyStore` (FIFO, max 5).
+When a pattern's TTL sampling returns an average ≤ 0 (all sampled keys have no TTL):
+1. The pattern is marked as "no TTL".
+2. One representative key from this pattern is added to `NoTtlKeyStore` (FIFO, max 5).
+3. `balancedBytes` is not computed for this pattern.
 
 These keys are reported separately as "continuously growing, no expiry".
 
@@ -291,15 +307,16 @@ java -cp ... com.yj.redis.monitor.analyzer.MemoryIncrementAnalyzer \
      --port=<port>                    default: 6379
      --duration=<seconds>             default: 300
      --samples-per-pattern=<n>        default: 10
+     --ttl-samples-per-pattern=<n>    default: 5
      --upgrade-threshold=<n>          default: 10
      --output=<console|json>          default: console
      --top-n=<n>                      default: 20
 ```
 
 **Removed from original design:**
-- `--ttl-sample-rate`: TTL is extracted from command arguments or left as "no TTL". No sampling needed.
-- `--memory-sample-rate`: Replaced by `--samples-per-pattern` (fixed count per pattern).
-- `--ttl-default`: No default TTL assumption. If no TTL in command, it's a no-TTL key.
+- `--ttl-sample-rate` (percentage): Replaced by `--ttl-samples-per-pattern` (fixed count per pattern).
+- `--memory-sample-rate` (percentage): Replaced by `--samples-per-pattern` (fixed count per pattern).
+- `--ttl-default`: No global default. Per-pattern TTL is determined by sampling.
 
 ## 5. Error Handling
 
