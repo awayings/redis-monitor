@@ -98,7 +98,43 @@ All commands that write keys are tracked. TTL is handled uniformly via sampling 
 
 **Design note:** We do NOT distinguish "new key creation" from "overwrite of existing key". All write commands increment the pattern's `writeCount`.
 
-### 3.3 PatternClusterer (Smart Clustering)
+### 3.3 KeyDeserializer
+
+MONITOR output provides key names as strings. However, in some Redis deployments keys are stored as serialized Java objects. We support two deserialization strategies, tried in sequence:
+
+**Strategy: Fallback chain**
+
+```java
+class KeyDeserializer {
+    String deserialize(byte[] keyBytes) {
+        // 1. Try JdkKeyDeserializer first
+        try {
+            return jdkDeserializer.deserialize(keyBytes);
+        } catch (Exception e) {
+            // 2. Fallback to StringDeserializer
+            try {
+                return stringDeserializer.deserialize(keyBytes);
+            } catch (Exception e2) {
+                // 3. Last resort: raw bytes as hex string
+                return Hex.encodeHexString(keyBytes);
+            }
+        }
+    }
+}
+```
+
+**JdkKeyDeserializer:**
+- Uses Java `ObjectInputStream` to deserialize key bytes.
+- Expects deserialized result to be a `String`.
+- Used when keys were written via JdkSerializationRedisSerializer.
+
+**StringDeserializer:**
+- Attempts to decode key bytes directly as UTF-8 string.
+- Used when keys are plain strings (most common case).
+
+**Note:** The fallback order can be swapped via configuration if the deployment predominantly uses plain string keys. Default order: Jdk first, String fallback.
+
+### 3.4 PatternClusterer (Smart Clustering)
 
 **Algorithm: Incremental Segment-based Pattern Extraction**
 
@@ -142,7 +178,7 @@ When a FIXED segment has seen `UPGRADE_THRESHOLD` (default 10) distinct values, 
 - Variable segments rendered as `*`.
 - Example: `user:*:profile`, `session:*:data`, `log:*`.
 
-### 3.4 PatternStatsAggregator
+### 3.5 PatternStatsAggregator
 
 Central in-memory store for all statistics.
 
@@ -167,7 +203,7 @@ class PatternStats {
 
 **Assumption:** We assume all keys within the same pattern share the same TTL. The `avgTtlSeconds` is computed from a small fixed-size sample per pattern. We also assume expiration rate ≈ write rate for the `balancedBytes` reference value. The primary output metric is `incrementBytes`.
 
-### 3.5 MemorySamplerThread
+### 3.6 MemorySamplerThread
 
 Runs in a **separate thread** with its own Jedis connection.
 
@@ -194,7 +230,7 @@ class MemorySamplerThread extends Thread {
 - Once a pattern reaches the limit, no more `MEMORY USAGE` queries for that pattern.
 - This caps Redis load at: `number_of_patterns * samples_per_pattern`.
 
-### 3.6 TtlSampler
+### 3.7 TtlSampler
 
 Runs in the **main thread** (lightweight `TTL` queries are fast enough to not need async).
 
@@ -209,7 +245,7 @@ Runs in the **main thread** (lightweight `TTL` queries are fast enough to not ne
 
 **No-TTL handling:** If `TTL` returns -1 (no expiry), that sample is still stored. If the average of TTL samples for a pattern is ≤ 0, the pattern is treated as "no TTL".
 
-### 3.7 NoTtlKeyStore
+### 3.8 NoTtlKeyStore
 
 Retains up to 5 examples of keys from **patterns with no TTL**.
 
@@ -232,7 +268,7 @@ When a pattern's TTL sampling returns an average ≤ 0 (all sampled keys have no
 
 These keys are reported separately as "continuously growing, no expiry".
 
-### 3.7 ReportPrinter
+### 3.9 ReportPrinter
 
 Outputs to stdout at end of monitoring duration (or on Ctrl-C).
 
