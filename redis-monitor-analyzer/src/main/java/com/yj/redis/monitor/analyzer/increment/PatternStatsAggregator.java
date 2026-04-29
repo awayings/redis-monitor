@@ -115,6 +115,16 @@ public class PatternStatsAggregator {
     }
 
     /**
+     * Adds a sample key for the given pattern.
+     */
+    public void addSampleKey(String pattern, String key) {
+        PatternStats stats = statsMap.get(pattern);
+        if (stats != null) {
+            stats.addSampleKey(key);
+        }
+    }
+
+    /**
      * Returns a snapshot of write counts per pattern.
      * The returned map is a detached copy.
      */

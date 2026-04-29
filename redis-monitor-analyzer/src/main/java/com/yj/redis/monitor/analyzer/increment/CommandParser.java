@@ -1,5 +1,6 @@
 package com.yj.redis.monitor.analyzer.increment;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -44,6 +45,7 @@ public class CommandParser {
             if (key == null || key.isEmpty()) {
                 return null;
             }
+            key = deserializeKeyIfNeeded(key);
             Long ttl = extractInlineTtl(cmd, tokens);
             long valueSize = computeValueSize(cmd, tokens);
             return new ParsedCommand(cmd, key, ttl, monitorLine, true, valueSize);
@@ -54,6 +56,7 @@ public class CommandParser {
             if (key == null || key.isEmpty()) {
                 return null;
             }
+            key = deserializeKeyIfNeeded(key);
             String ttlStr = tokens.size() > 2 ? tokens.get(2) : null;
             if (ttlStr == null || ttlStr.isEmpty()) {
                 return null;
@@ -87,11 +90,19 @@ public class CommandParser {
             }
 
             int quoteEnd = quoteStart + 1;
-            while (quoteEnd < after.length() && after.charAt(quoteEnd) != '"') {
-                quoteEnd++;
+            while (quoteEnd < after.length()) {
+                char c = after.charAt(quoteEnd);
+                if (c == '\\' && quoteEnd + 1 < after.length()) {
+                    // Skip escaped character (e.g. \", \\, \xNN, \n, \r, \t)
+                    // For \xNN we skip 4 chars total, handled below
+                    quoteEnd += 2;
+                } else if (c == '"') {
+                    break;
+                } else {
+                    quoteEnd++;
+                }
             }
             if (quoteEnd >= after.length()) {
-                // Unclosed quote, skip this and any subsequent tokens
                 break;
             }
 
@@ -100,6 +111,68 @@ public class CommandParser {
         }
 
         return tokens;
+    }
+
+    private static String deserializeKeyIfNeeded(String key) {
+        if (key == null || !key.contains("\\")) {
+            return key;
+        }
+        byte[] bytes = decodeEscapesToBytes(key);
+        if (bytes.length == 0) {
+            return key;
+        }
+        if (key.contains("\\x")) {
+            return new KeyDeserializer(true).deserialize(bytes);
+        }
+        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Decodes Redis MONITOR escape sequences into raw bytes.
+     * Handles: \xNN (hex), \" (double quote), \\ (backslash),
+     * \n (newline), \r (carriage return), \t (tab).
+     */
+    static byte[] decodeEscapesToBytes(String escaped) {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        int i = 0;
+        while (i < escaped.length()) {
+            char c = escaped.charAt(i);
+            if (c == '\\' && i + 1 < escaped.length()) {
+                char next = escaped.charAt(i + 1);
+                if (next == 'x' && i + 3 < escaped.length()) {
+                    String hex = escaped.substring(i + 2, i + 4);
+                    try {
+                        baos.write(Integer.parseInt(hex, 16));
+                    } catch (NumberFormatException e) {
+                        baos.write((byte) c);
+                        baos.write((byte) next);
+                    }
+                    i += 4;
+                } else if (next == '"') {
+                    baos.write((byte) '"');
+                    i += 2;
+                } else if (next == '\\') {
+                    baos.write((byte) '\\');
+                    i += 2;
+                } else if (next == 'n') {
+                    baos.write((byte) '\n');
+                    i += 2;
+                } else if (next == 'r') {
+                    baos.write((byte) '\r');
+                    i += 2;
+                } else if (next == 't') {
+                    baos.write((byte) '\t');
+                    i += 2;
+                } else {
+                    baos.write((byte) c);
+                    i++;
+                }
+            } else {
+                baos.write((byte) c);
+                i++;
+            }
+        }
+        return baos.toByteArray();
     }
 
     /**

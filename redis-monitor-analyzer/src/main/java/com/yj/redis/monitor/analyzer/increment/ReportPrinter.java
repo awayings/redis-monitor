@@ -99,6 +99,9 @@ public class ReportPrinter {
                 "TOTAL", "", totalWrites, "", "", "", totalIncrementStr, totalBalancedStr);
         out.println();
 
+        // * cluster sample keys
+        printStarSampleKeys(topPatterns, out);
+
         // No-TTL samples section
         List<NoTtlKeySample> noTtlSamples = noTtlStore.getSamples();
         if (!noTtlSamples.isEmpty()) {
@@ -141,6 +144,7 @@ public class ReportPrinter {
         out.println("  \"patterns\": [");
         for (int i = 0; i < topPatterns.size(); i++) {
             PatternStats stats = topPatterns.get(i);
+            boolean hasSampleKeys = "*".equals(stats.getPattern()) && !stats.getSampleKeys().isEmpty();
             out.println("    {");
             out.println("      \"pattern\": " + jsonEscape(stats.getPattern()) + ",");
             out.println("      \"writeCount\": " + stats.getWriteCount() + ",");
@@ -148,7 +152,20 @@ public class ReportPrinter {
             out.println("      \"avgTtlSec\": " + String.format("%.1f", stats.getAvgTtlSeconds()) + ",");
             out.println("      \"avgMemoryBytes\": " + Math.round(stats.getAvgMemoryBytes()) + ",");
             out.println("      \"incrementBytes\": " + Math.round(stats.getIncrementBytes()) + ",");
-            out.println("      \"balancedBytes\": " + Math.round(stats.getBalancedBytes(durationSec)));
+            out.println("      \"balancedBytes\": " + Math.round(stats.getBalancedBytes(durationSec))
+                    + (hasSampleKeys ? "," : ""));
+            if (hasSampleKeys) {
+                out.println("      \"sampleKeys\": [");
+                List<String> keys = stats.getSampleKeys();
+                for (int j = 0; j < keys.size(); j++) {
+                    if (j < keys.size() - 1) {
+                        out.println("        " + jsonEscape(keys.get(j)) + ",");
+                    } else {
+                        out.println("        " + jsonEscape(keys.get(j)));
+                    }
+                }
+                out.println("      ]");
+            }
             if (i < topPatterns.size() - 1) {
                 out.println("    },");
             } else {
@@ -229,6 +246,9 @@ public class ReportPrinter {
                 "TOTAL", "", totalWrites, "", "", "",
                 formatBytes((long) totalIncrement), formatBytes((long) totalBalanced));
         out.println();
+
+        // * cluster sample keys
+        printStarSampleKeys(topPatterns, out);
 
         // No-TTL samples section
         List<NoTtlKeySample> noTtlSamples = noTtlStore.getSamples();
@@ -325,6 +345,7 @@ public class ReportPrinter {
         out.println("  \"patterns\": [");
         for (int i = 0; i < topPatterns.size(); i++) {
             PatternStats stats = topPatterns.get(i);
+            boolean hasSampleKeys = "*".equals(stats.getPattern()) && !stats.getSampleKeys().isEmpty();
             out.println("    {");
             out.println("      \"pattern\": " + jsonEscape(stats.getPattern()) + ",");
             out.println("      \"writeCount\": " + stats.getWriteCount() + ",");
@@ -332,7 +353,20 @@ public class ReportPrinter {
             out.println("      \"avgTtlSec\": " + String.format("%.1f", stats.getAvgTtlSeconds()) + ",");
             out.println("      \"avgMemoryBytes\": " + Math.round(stats.getAvgMemoryBytes()) + ",");
             out.println("      \"incrementBytes\": " + Math.round(stats.getIncrementBytes()) + ",");
-            out.println("      \"balancedBytes\": " + Math.round(stats.getBalancedBytes(actualDurationSec)));
+            out.println("      \"balancedBytes\": " + Math.round(stats.getBalancedBytes(actualDurationSec))
+                    + (hasSampleKeys ? "," : ""));
+            if (hasSampleKeys) {
+                out.println("      \"sampleKeys\": [");
+                List<String> keys = stats.getSampleKeys();
+                for (int j = 0; j < keys.size(); j++) {
+                    if (j < keys.size() - 1) {
+                        out.println("        " + jsonEscape(keys.get(j)) + ",");
+                    } else {
+                        out.println("        " + jsonEscape(keys.get(j)));
+                    }
+                }
+                out.println("      ]");
+            }
             if (i < topPatterns.size() - 1) {
                 out.println("    },");
             } else {
@@ -399,6 +433,20 @@ public class ReportPrinter {
             return value;
         }
         return value.substring(0, maxLen - 1) + "…";
+    }
+
+    private static void printStarSampleKeys(List<PatternStats> topPatterns, PrintStream out) {
+        for (PatternStats stats : topPatterns) {
+            if ("*".equals(stats.getPattern()) && !stats.getSampleKeys().isEmpty()) {
+                out.println("--- Sample keys for * (uncategorized) ---");
+                List<String> keys = stats.getSampleKeys();
+                for (int i = 0; i < keys.size(); i++) {
+                    out.println("  " + (i + 1) + ". " + truncate(keys.get(i), 80));
+                }
+                out.println();
+                return;
+            }
+        }
     }
 
     static String jsonEscape(String value) {

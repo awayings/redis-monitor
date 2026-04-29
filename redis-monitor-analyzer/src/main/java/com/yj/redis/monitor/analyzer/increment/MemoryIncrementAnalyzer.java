@@ -278,6 +278,10 @@ public class MemoryIncrementAnalyzer {
 
         String pattern = clusterer.cluster(cmd.getKey());
 
+        if ("*".equals(pattern)) {
+            aggregator.addSampleKey(pattern, cmd.getKey());
+        }
+
         if (cmd.isWriteCommand()) {
             aggregator.recordWrite(pattern);
             aggregator.setRepresentativeKeyIfAbsent(pattern, cmd.getKey());
