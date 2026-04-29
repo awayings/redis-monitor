@@ -8,8 +8,10 @@ Key characteristics:
 - Log files are REDIS MONITOR output saved to disk, one line per command.
 - Multiple files exist in a batch directory, each from a different Redis node.
 - Each file is analyzed independently; a cross-file summary is also output.
-- No Redis connection needed in file mode. Memory sampling and delayed TTL queries are skipped.
-- Report adapts: memory columns show `N/A`, TTL comes from inline + EXPIRE commands only.
+- No Redis connection needed in file mode. Delayed TTL queries are skipped.
+- Memory estimation: instead of `MEMORY USAGE key`, use the **string length of the value argument(s)** from the MONITOR output as a proxy for memory size.
+- TTL comes from inline + EXPIRE commands only; delayed `TTL key` queries are skipped.
+- Report is fully populated — all columns have data in file mode.
 
 ## 2. Line Format
 
@@ -38,17 +40,19 @@ FileLineSource                      MonitorStream
                    ▼      ▼                            ▼      ▼
               processLine()                    processLine()
               (file mode:                     (live mode:
-               skip TtlSampler,                use TtlSampler,
-               skip MemorySampler)             use MemorySampler)
+               addMemorySample by              addMemorySample from
+               value string length,            MEMORY USAGE query,
+               skip TtlSampler)                use TtlSampler)
                    │                                 │
                    ▼                                 ▼
          PatternStatsAggregator            PatternStatsAggregator
          PatternClusterer                  PatternClusterer
          CommandParser                     CommandParser
+         (extracts value size)             (unchanged)
                    │                                 │
                    ▼                                 ▼
              ReportPrinter                    ReportPrinter
-          (file-adapted output)            (full output)
+           (full output)                     (full output)
 ```
 
 ## 4. Component Changes
@@ -100,7 +104,43 @@ static double extractTimestamp(String line) {
 **Per-file summary:**
 After each file, capture a snapshot of the aggregator's current state. The delta from the previous snapshot gives per-file-only stats. Call `ReportPrinter.printPerFileSummary(fileName, perFileStats, perFileDuration)` where `perFileDuration` is computed from that file's own first and last timestamp.
 
-### 4.3 MemoryIncrementAnalyzer
+### 4.3 CommandParser — Value Size Extraction (New)
+
+New method to extract the total string length of value argument(s):
+
+```java
+/**
+ * Returns total string length of value argument(s) for memory estimation.
+ * For SET/SETEX/PSETEX: length of the value token.
+ * For HSET/HMSET/HSETNX: sum of field + value token lengths.
+ * For SADD: sum of all member token lengths.
+ * For ZADD: sum of member token lengths (scores excluded).
+ * Returns -1 if value cannot be determined.
+ */
+public static long estimateValueSize(ParsedCommand cmd);
+```
+
+The `ParsedCommand` already stores the parsed tokens, so `estimateValueSize` works from the parsed token list.
+
+**Token layout by command:**
+
+| Command | Value tokens |
+|---------|-------------|
+| SET key value | token[2] |
+| SETNX/GETSET | token[2] |
+| SETEX key sec value | token[3] |
+| PSETEX key ms value | token[3] |
+| MSET k1 v1 k2 v2... | token[2], token[4], ... (even indices after key) |
+| HSET key f v | token[2] + token[3] |
+| HMSET key f1 v1 f2 v2... | token[3], token[5], ... (odd indices ≥ 3) |
+| HSETNX key f v | token[2] + token[3] |
+| SADD key m1 m2... | token[2] + token[3] + ... |
+| ZADD key s1 m1 s2 m2... | token[3], token[5], ... (odd indices ≥ 3) |
+| RESTORE key ttl serialized | token[3] |
+
+**Design note:** This is an approximation. Redis internal encoding (jemalloc, shared integers, ziplist/listpack, hash-table overhead) means actual memory differs from string length. But the string length serves as a consistent relative metric for ranking patterns by memory impact — patterns with larger values will rank higher, which is the goal.
+
+### 4.4 MemoryIncrementAnalyzer
 
 **Constructor change:**
 - Accept source mode; in file mode, skip creating `MemorySamplerThread`, `TtlSampler`, `RedisConnectionFactory`, `sampleQueue`.
@@ -125,8 +165,8 @@ private void runFileLoop() {
 
 **`processLine()` change:**
 Add a `sourceMode` flag. In file mode:
+- After `aggregator.recordWrite(pattern)`: call `CommandParser.estimateValueSize(cmd)` to get value string length, then `aggregator.addMemorySample(pattern, valueSize)` directly in the main thread (no async queue).
 - Skip `ttlSampler.scheduleDelayedTtl()` (line 141).
-- Skip `sampleQueue.offer()` (line 148).
 
 **`run()` change:**
 ```java
@@ -140,25 +180,26 @@ public void run() {
 }
 ```
 
-### 4.4 ReportPrinter
+### 4.5 ReportPrinter
 
 **File-mode adaptations:**
 - Host/port line: show `Source: <input-dir>` instead of `Host: localhost:6379`.
 - Duration: show computed duration from file timestamps.
-- Memory columns (`AvgMem`, `Increment`, `BalancedRef`): show `N/A`.
-- Primary ranking metric: change from `incrementBytes` to `writeCount`.
+- Memory columns (`AvgMem`, `Increment`, `BalancedRef`): show estimated value, computed from value string length (same formula as live mode).
+- Primary ranking metric: same as live mode (`incrementBytes`).
 - TTL note: add footnote `TTL: from inline + EXPIRE commands only (no live sampling)`.
 - TTL column: show value when available, `-` when pattern has no TTL data.
+- Memory footnote: add footnote `Memory: estimated from value string length` in file mode.
 
 **New method `printPerFileSummary()`:**
 A compact table for per-file output:
 ```
 ─── File: node-53.log (150.2s, 1,240 writes, 45 patterns) ───
-Top 5 patterns by write count:
-  Rank  Pattern                    Writes   WriteRate   AvgTTL
-  ─────────────────────────────────────────────────────────────
-   1    order:*:detail               320      2.1/s     1800s
-   2    user:*:profile               180      1.2/s     3600s
+Top 5 patterns by incrementBytes:
+  Rank  Pattern                    Writes   WriteRate   AvgTTL     AvgMem   Increment
+  ───────────────────────────────────────────────────────────────────────────────────
+   1    order:*:detail               320      2.1/s     1800s       512 B    160 KB
+   2    user:*:profile               180      1.2/s     3600s       256 B     45 KB
   ...
 ```
 
@@ -194,11 +235,12 @@ java -cp ... MemoryIncrementAnalyzer \
   Redis Memory Increment Analysis Report
   Source: ~/Dow/y/d/redis_analyze/batch_20260427_143001
   Files: 4  |  Duration: 298.5s (from timestamps)
+  Memory: estimated from value string length
   TTL: from inline + EXPIRE commands only (no live sampling)
 ═══════════════════════════════════════════════════════════════════
 
 ─── File: redis-node-53.log (147.2s, 1,240 writes, 45 patterns) ───
-Top 5 patterns:
+Top 5 patterns by incrementBytes:
   (per-file top 5 table)
 ...
 
@@ -208,25 +250,25 @@ Top 5 patterns:
 ─── File: redis-node-12.log (145.3s, 1,560 writes, 52 patterns) ───
 ...
 
-【Cross-File Summary — Top N by total write count】
-Rank  Pattern                Writes   WriteRate   AvgTTL     AvgMem   Increment
-────────────────────────────────────────────────────────────────────────────────
- 1    order:*:detail          1,240      4.2/s     1800s       N/A       N/A
- 2    user:*:profile            890      3.0/s     3600s       N/A       N/A
- 3    cache:*                   670      2.2/s      300s       N/A       N/A
- 4    session:*                 520      1.7/s        -        N/A       N/A
- 5    log:*                     310      1.0/s        -        N/A       N/A
-────────────────────────────────────────────────────────────────────────────────
-Total (all patterns)          4,780
+【Cross-File Summary — Top N by incrementBytes】
+Rank  Pattern                Writes   WriteRate   AvgTTL     AvgMem   Increment    BalancedRef
+──────────────────────────────────────────────────────────────────────────────────────────────
+ 1    order:*:detail          1,240      4.2/s     1800s     512 B    620 KB       3.7 MB
+ 2    user:*:profile            890      3.0/s     3600s     256 B    223 KB       2.7 MB
+ 3    cache:*                   670      2.2/s      300s     128 B     84 KB       0.1 MB
+ 4    session:*                 520      1.7/s        -      64 B     33 KB           -
+ 5    log:*                     310      1.0/s        -      96 B     30 KB           -
+──────────────────────────────────────────────────────────────────────────────────────────────
+Total (with TTL)                                                      927 KB       6.5 MB
 
 【No-TTL Key Samples (continuous growth, no expiry limit)】
-Pattern            Key                      Command
-─────────────────────────────────────────────────────────────────
-log:*              log:events:20260427      SET log:events:20260427 ...
+Pattern            Key                      Memory      Command
+──────────────────────────────────────────────────────────────────────
+log:*              log:events:20260427      96 B        SET log:events:20260427 ...
 ... (max 5)
 ```
 
-JSON mode adapts similarly: `memoryBytes` fields are `null`, `source` replaces `host`/`port`.
+JSON mode adapts similarly: `memoryBytes` fields use value string length estimation, `source` replaces `host`/`port`.
 
 ## 7. Error Handling
 
@@ -254,7 +296,8 @@ No new dependencies. `FileLineSource` only uses `java.io.*` and `java.nio.file.*
 | `FileLineSourceTest` | Reads a temp directory with sample `.log` files, verifies line count and handler calls |
 | `FileLineSourceTest` | Timestamp extraction from various line formats |
 | `FileLineSourceTest` | Empty directory, no `.log` files, malformed lines |
+| `CommandParserTest` (extend) | `estimateValueSize()` for each tracked command: SET, SETEX, HSET, SADD, ZADD, etc. |
 | `CommandParserTest` (extend) | Parse lines from file format (verify same as live format) |
 | `ArgsTest` (extend) | `--source=file --input-dir=...` parsing, validation |
-| `MemoryIncrementAnalyzerTest` (extend) | File mode: samplers not started, processLine skips memory/TTL sampling |
-| Integration test | Create a temp `.log` file with known commands, run analyzer in file mode, verify report output |
+| `MemoryIncrementAnalyzerTest` (extend) | File mode: no Redis connection created, TtlSampler not started, memory sample from value size |
+| Integration test | Create a temp `.log` file with known commands, run analyzer in file mode, verify report output with estimated memory values |
