@@ -18,7 +18,6 @@ public class ReportPrinter {
     private final int port;
     private final int durationSec;
     private final int samplesPerPattern;
-    private final boolean fileMode;
     private final String inputDir;
 
     public ReportPrinter(String host, int port, int durationSec, int samplesPerPattern) {
@@ -26,7 +25,6 @@ public class ReportPrinter {
         this.port = port;
         this.durationSec = durationSec;
         this.samplesPerPattern = samplesPerPattern;
-        this.fileMode = false;
         this.inputDir = null;
     }
 
@@ -42,7 +40,6 @@ public class ReportPrinter {
         this.port = -1;
         this.durationSec = 0;
         this.samplesPerPattern = 0;
-        this.fileMode = true;
         this.inputDir = inputDir;
     }
 
