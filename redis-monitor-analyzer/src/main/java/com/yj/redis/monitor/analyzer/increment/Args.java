@@ -15,7 +15,7 @@ public class Args {
     private static final Set<String> VALID_KEYS = new HashSet<>(Arrays.asList(
             "host", "port", "duration", "samples-per-pattern",
             "ttl-samples-per-pattern", "upgrade-threshold", "output", "top-n", "password",
-            "source", "input-dir"
+            "source", "input-dir", "print-interval"
     ));
 
     private final Source source;
@@ -29,6 +29,7 @@ public class Args {
     private final int topN;
     private final String password;
     private final String inputDir;
+    private final int printIntervalSec;
 
     private Args(Builder builder) {
         this.source = builder.source;
@@ -42,6 +43,7 @@ public class Args {
         this.topN = builder.topN;
         this.password = builder.password;
         this.inputDir = builder.inputDir;
+        this.printIntervalSec = builder.printIntervalSec;
     }
 
     /**
@@ -115,6 +117,9 @@ public class Args {
                     case "input-dir":
                         builder.inputDir = value;
                         break;
+                    case "print-interval":
+                        builder.printIntervalSec = parseNonNegativeInt("print-interval", value);
+                        break;
                     default:
                         throw new IllegalArgumentException("Unknown argument: --" + key);
                 }
@@ -133,6 +138,18 @@ public class Args {
             int parsed = Integer.parseInt(value);
             if (parsed <= 0) {
                 throw new IllegalArgumentException(name + " must be positive, got: " + value);
+            }
+            return parsed;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid " + name + " value: " + value, e);
+        }
+    }
+
+    private static int parseNonNegativeInt(String name, String value) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 0) {
+                throw new IllegalArgumentException(name + " must be non-negative, got: " + value);
             }
             return parsed;
         } catch (NumberFormatException e) {
@@ -192,6 +209,10 @@ public class Args {
         return password;
     }
 
+    public int getPrintIntervalSec() {
+        return printIntervalSec;
+    }
+
     @Override
     public String toString() {
         if (source == Source.FILE) {
@@ -201,7 +222,8 @@ public class Args {
                     ", ttlSamplesPerPattern=" + ttlSamplesPerPattern +
                     ", upgradeThreshold=" + upgradeThreshold +
                     ", topN=" + topN +
-                    ", output=" + output.name().toLowerCase();
+                    ", output=" + output.name().toLowerCase() +
+                    ", printInterval=" + printIntervalSec + "s";
         }
         return "source=live, host=" + host + ", port=" + port +
                 ", duration=" + durationSec + "s" +
@@ -210,7 +232,8 @@ public class Args {
                 ", upgradeThreshold=" + upgradeThreshold +
                 ", topN=" + topN +
                 ", output=" + output.name().toLowerCase() +
-                (password != null ? ", password=***" : "");
+                (password != null ? ", password=***" : "") +
+                ", printInterval=" + printIntervalSec + "s";
     }
 
     private static class Builder {
@@ -225,5 +248,6 @@ public class Args {
         private int topN = 20;
         private String password = null;
         private String inputDir = null;
+        private int printIntervalSec = 30;
     }
 }
