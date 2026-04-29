@@ -773,4 +773,112 @@ public class MemoryIncrementAnalyzerIntegrationTest {
 
         tempDir.toFile().delete();
     }
+
+    // ========================================================================
+    // Test 21: Periodic intermediate printing produces intermediate reports
+    // ========================================================================
+
+    @Test
+    public void testPeriodicIntermediatePrintingLiveMode() throws Exception {
+        String prefix = "__it_periodic:";
+
+        for (int i = 0; i < 10; i++) {
+            jedis.setex(prefix + i, 60, "data");
+        }
+
+        Args args = Args.parse(new String[]{
+                "--host=" + HOST, "--port=" + PORT, "--duration=5",
+                "--samples-per-pattern=3", "--ttl-samples-per-pattern=3",
+                "--upgrade-threshold=10", "--top-n=20", "--output=console",
+                "--print-interval=1"
+        });
+
+        MemoryIncrementAnalyzer analyzer = new MemoryIncrementAnalyzer(args);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PrintStream captured = new PrintStream(baos);
+        PrintStream original = System.out;
+        System.setOut(captured);
+
+        try {
+            Thread writer = new Thread(() -> {
+                Jedis w = new RedisConnectionFactory(HOST, PORT).createConnection();
+                long deadline = System.currentTimeMillis() + 4500;
+                while (System.currentTimeMillis() < deadline) {
+                    for (int i = 0; i < 10; i++) {
+                        w.setex(prefix + i, 60, "more_data");
+                    }
+                    try { Thread.sleep(200); } catch (Exception ignored) {}
+                }
+                w.close();
+            }, "TestWriter");
+            writer.start();
+
+            analyzer.run();
+            writer.join(5000);
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = baos.toString();
+
+        assertTrue("Should contain intermediate report",
+                output.contains("--- Intermediate Report"));
+        assertTrue("Should contain final report header",
+                output.contains("Redis Memory Increment"));
+    }
+
+    // ========================================================================
+    // Test 22: print-interval=0 produces no intermediate reports
+    // ========================================================================
+
+    @Test
+    public void testPrintIntervalZeroNoIntermediateReports() throws Exception {
+        String prefix = "__it_nointer:";
+
+        for (int i = 0; i < 5; i++) {
+            jedis.setex(prefix + i, 60, "data");
+        }
+
+        Args args = Args.parse(new String[]{
+                "--host=" + HOST, "--port=" + PORT, "--duration=3",
+                "--samples-per-pattern=2", "--ttl-samples-per-pattern=2",
+                "--upgrade-threshold=10", "--top-n=20", "--output=console",
+                "--print-interval=0"
+        });
+
+        MemoryIncrementAnalyzer analyzer = new MemoryIncrementAnalyzer(args);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PrintStream captured = new PrintStream(baos);
+        PrintStream original = System.out;
+        System.setOut(captured);
+
+        try {
+            Thread writer = new Thread(() -> {
+                Jedis w = new RedisConnectionFactory(HOST, PORT).createConnection();
+                long deadline = System.currentTimeMillis() + 2500;
+                while (System.currentTimeMillis() < deadline) {
+                    for (int i = 0; i < 5; i++) {
+                        w.setex(prefix + i, 60, "more");
+                    }
+                    try { Thread.sleep(200); } catch (Exception ignored) {}
+                }
+                w.close();
+            }, "TestWriter");
+            writer.start();
+
+            analyzer.run();
+            writer.join(5000);
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = baos.toString();
+
+        assertFalse("Should not contain intermediate report when print-interval=0",
+                output.contains("--- Intermediate Report"));
+        assertTrue("Should contain final report header",
+                output.contains("Redis Memory Increment"));
+    }
 }
