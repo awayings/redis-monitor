@@ -205,7 +205,7 @@ public class CommandParserTest {
         String line = "1234567890.123456 [0 127.0.0.1:12345] \"HSET\" \"hk\" \"f1\" \"v1\"";
         ParsedCommand cmd = CommandParser.parse(line);
         assertNotNull(cmd);
-        assertEquals(4, cmd.getValueSize()); // "f1".length() + "v1".length() = 2+2
+        assertEquals(2, cmd.getValueSize()); // token[3] = "v1".length()
     }
 
     @Test
@@ -254,5 +254,29 @@ public class CommandParserTest {
         ParsedCommand cmd = CommandParser.parse(line);
         assertNotNull(cmd);
         assertEquals(16, cmd.getValueSize()); // "serialized_value".length()
+    }
+
+    @Test
+    public void testValueSizeForPsetex() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"PSETEX\" \"key1\" \"5000\" \"value\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(5, cmd.getValueSize()); // token[3] = "value".length()
+    }
+
+    @Test
+    public void testValueSizeForGetset() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"GETSET\" \"key1\" \"newval\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(6, cmd.getValueSize()); // token[2] = "newval".length()
+    }
+
+    @Test
+    public void testValueSizeForHmset() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"HMSET\" \"hk\" \"f1\" \"v1\" \"f2\" \"v22\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(5, cmd.getValueSize()); // token[3]+token[5] = "v1".length() + "v22".length() = 2+3
     }
 }

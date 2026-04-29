@@ -202,7 +202,7 @@ public class CommandParser {
                 return msetSize;
             case "HSET":
             case "HSETNX":
-                return tokens.size() > 3 ? tokens.get(2).length() + tokens.get(3).length() : -1;
+                return tokens.size() > 3 ? tokens.get(3).length() : -1;
             case "HMSET":
                 if (tokens.size() < 4) return -1;
                 long hmsetSize = 0;
