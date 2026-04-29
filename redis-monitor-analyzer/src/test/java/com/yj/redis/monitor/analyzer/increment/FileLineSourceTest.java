@@ -130,4 +130,9 @@ public class FileLineSourceTest {
         File file = tempFolder.newFile("notadir.log");
         new FileLineSource(file.getAbsolutePath());
     }
+
+    @Test(expected = NullPointerException.class)
+    public void testConstructorNullPath() {
+        new FileLineSource(null);
+    }
 }

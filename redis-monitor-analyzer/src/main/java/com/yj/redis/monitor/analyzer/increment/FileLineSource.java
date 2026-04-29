@@ -9,12 +9,14 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 public class FileLineSource {
 
     private final File directory;
 
     public FileLineSource(String directoryPath) {
+        Objects.requireNonNull(directoryPath, "directoryPath must not be null");
         this.directory = new File(directoryPath);
         if (!directory.exists()) {
             throw new IllegalArgumentException(
@@ -51,7 +53,12 @@ public class FileLineSource {
         try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                handler.onLine(line);
+                try {
+                    handler.onLine(line);
+                } catch (Exception e) {
+                    handler.onError(e);
+                    throw e;
+                }
 
                 Double ts = extractTimestamp(line);
                 if (ts != null) {
