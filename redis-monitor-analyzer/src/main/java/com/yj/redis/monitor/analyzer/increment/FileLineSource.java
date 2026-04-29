@@ -57,7 +57,6 @@ public class FileLineSource {
                     handler.onLine(line);
                 } catch (Exception e) {
                     handler.onError(e);
-                    throw e;
                 }
 
                 Double ts = extractTimestamp(line);

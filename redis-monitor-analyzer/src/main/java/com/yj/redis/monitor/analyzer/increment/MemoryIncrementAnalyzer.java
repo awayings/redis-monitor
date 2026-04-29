@@ -62,9 +62,10 @@ public class MemoryIncrementAnalyzer {
     }
 
     private void runLiveMode() {
-        System.out.println("Redis Memory Increment Analyzer");
-        System.out.println("Config: " + args);
-        System.out.println();
+        PrintStream out = args.getOutput() == OutputFormat.JSON ? System.err : System.out;
+        out.println("Redis Memory Increment Analyzer");
+        out.println("Config: " + args);
+        out.println();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             interrupted = true;
@@ -90,15 +91,16 @@ public class MemoryIncrementAnalyzer {
     }
 
     private void runFileMode() {
-        System.out.println("Redis Memory Increment Analyzer (File Mode)");
-        System.out.println("Config: " + args);
-        System.out.println();
+        PrintStream out = args.getOutput() == OutputFormat.JSON ? System.err : System.out;
+        out.println("Redis Memory Increment Analyzer (File Mode)");
+        out.println("Config: " + args);
+        out.println();
 
         FileLineSource source = new FileLineSource(args.getInputDir());
         List<File> files = source.listLogFiles();
 
         if (files.isEmpty()) {
-            System.out.println("Warning: No .log files found in " + args.getInputDir());
+            out.println("Warning: No .log files found in " + args.getInputDir());
             return;
         }
 
@@ -110,8 +112,8 @@ public class MemoryIncrementAnalyzer {
             }
         }, "ShutdownHook"));
 
-        System.out.println("Found " + files.size() + " .log file(s)");
-        System.out.println();
+        out.println("Found " + files.size() + " .log file(s)");
+        out.println();
 
         // Per-file progress goes to stdout for console, stderr for JSON
         PrintStream perFileOut = args.getOutput() == OutputFormat.JSON ? System.err : System.out;
