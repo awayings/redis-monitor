@@ -109,4 +109,30 @@ public class PatternStatsAggregatorTest {
         agg.recordWrite("b:*");
         assertEquals(2, agg.getAllStats().size());
     }
+
+    @Test
+    public void testGetWriteCountSnapshot() {
+        PatternStatsAggregator agg = new PatternStatsAggregator(5, 10);
+        agg.recordWrite("a:*");
+        agg.recordWrite("a:*");
+        agg.recordWrite("b:*");
+
+        java.util.Map<String, Long> snapshot = agg.getWriteCountSnapshot();
+        assertEquals(2L, snapshot.get("a:*").longValue());
+        assertEquals(1L, snapshot.get("b:*").longValue());
+        assertEquals(2, snapshot.size());
+    }
+
+    @Test
+    public void testGetWriteCountSnapshotReturnsCopy() {
+        PatternStatsAggregator agg = new PatternStatsAggregator(5, 10);
+        agg.recordWrite("a:*");
+
+        java.util.Map<String, Long> snap1 = agg.getWriteCountSnapshot();
+        agg.recordWrite("a:*");
+        java.util.Map<String, Long> snap2 = agg.getWriteCountSnapshot();
+
+        assertEquals(1L, snap1.get("a:*").longValue());
+        assertEquals(2L, snap2.get("a:*").longValue());
+    }
 }

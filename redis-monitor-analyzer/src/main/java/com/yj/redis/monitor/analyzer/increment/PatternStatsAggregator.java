@@ -111,4 +111,16 @@ public class PatternStatsAggregator {
     public int getPatternCount() {
         return statsMap.size();
     }
+
+    /**
+     * Returns a snapshot of write counts per pattern.
+     * The returned map is a detached copy.
+     */
+    public java.util.Map<String, Long> getWriteCountSnapshot() {
+        java.util.Map<String, Long> snapshot = new java.util.HashMap<>();
+        for (java.util.Map.Entry<String, PatternStats> entry : statsMap.entrySet()) {
+            snapshot.put(entry.getKey(), entry.getValue().getWriteCount());
+        }
+        return snapshot;
+    }
 }
