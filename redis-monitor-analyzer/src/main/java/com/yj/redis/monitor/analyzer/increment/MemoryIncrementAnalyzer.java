@@ -9,7 +9,10 @@ import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class MemoryIncrementAnalyzer {
 
@@ -252,6 +255,17 @@ public class MemoryIncrementAnalyzer {
         }
     }
 
+    private void populateNoTtlStore() {
+        for (PatternStats stats : aggregator.getAllStats()) {
+            if (!stats.getTtlSamples().isEmpty() && stats.getAvgTtlSeconds() <= 0) {
+                long memoryBytes = (long) stats.getAvgMemoryBytes();
+                String repKey = stats.getRepresentativeKey() != null
+                        ? stats.getRepresentativeKey() : stats.getPattern();
+                noTtlStore.offer(repKey, stats.getPattern(), memoryBytes, "TTL");
+            }
+        }
+    }
+
     /**
      * Prints the final report. Can be called from the shutdown hook or after
      * normal completion.
@@ -262,16 +276,7 @@ public class MemoryIncrementAnalyzer {
         }
         reportPrinted = true;
 
-        // Move patterns with no TTL to the noTtlStore
-        for (PatternStats stats : aggregator.getAllStats()) {
-            if (!stats.getTtlSamples().isEmpty() && stats.getAvgTtlSeconds() <= 0) {
-                long memoryBytes = (long) stats.getAvgMemoryBytes();
-                String repKey = stats.getRepresentativeKey() != null
-                        ? stats.getRepresentativeKey() : stats.getPattern();
-                noTtlStore.offer(repKey, stats.getPattern(),
-                        memoryBytes, "TTL");
-            }
-        }
+        populateNoTtlStore();
 
         PrintStream out = System.out;
         if (args.getOutput() == OutputFormat.JSON) {
@@ -281,7 +286,7 @@ public class MemoryIncrementAnalyzer {
         }
 
         if (interrupted) {
-            out.println("[Interrupted by user — partial report shown]");
+            out.println("[Interrupted by user -- partial report shown]");
         }
     }
 
@@ -291,14 +296,7 @@ public class MemoryIncrementAnalyzer {
         }
         reportPrinted = true;
 
-        for (PatternStats stats : aggregator.getAllStats()) {
-            if (!stats.getTtlSamples().isEmpty() && stats.getAvgTtlSeconds() <= 0) {
-                long memoryBytes = (long) stats.getAvgMemoryBytes();
-                String repKey = stats.getRepresentativeKey() != null
-                        ? stats.getRepresentativeKey() : stats.getPattern();
-                noTtlStore.offer(repKey, stats.getPattern(), memoryBytes, "TTL");
-            }
-        }
+        populateNoTtlStore();
 
         java.io.PrintStream out = System.out;
         if (args.getOutput() == OutputFormat.JSON) {
