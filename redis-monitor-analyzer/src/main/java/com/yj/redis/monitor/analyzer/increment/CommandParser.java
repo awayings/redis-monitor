@@ -45,7 +45,8 @@ public class CommandParser {
                 return null;
             }
             Long ttl = extractInlineTtl(cmd, tokens);
-            return new ParsedCommand(cmd, key, ttl, monitorLine, true);
+            long valueSize = computeValueSize(cmd, tokens);
+            return new ParsedCommand(cmd, key, ttl, monitorLine, true, valueSize);
         }
 
         if (TTL_COMMANDS.contains(cmd)) {
@@ -61,7 +62,7 @@ public class CommandParser {
             if (ttl == null) {
                 return null;
             }
-            return new ParsedCommand(cmd, key, ttl, monitorLine, false);
+            return new ParsedCommand(cmd, key, ttl, monitorLine, false, -1);
         }
 
         return null;
@@ -172,6 +173,61 @@ public class CommandParser {
             }
         } catch (NumberFormatException e) {
             return null;
+        }
+    }
+
+    /**
+     * Computes the combined string length of value arguments for write commands.
+     * This serves as a memory proxy when MEMORY USAGE is unavailable (file mode).
+     *
+     * @param cmd    the uppercase command name
+     * @param tokens the tokenized arguments (index 0 = command, 1 = key, 2+ = args)
+     * @return sum of value argument lengths, or -1 if the command has no values
+     */
+    private static long computeValueSize(String cmd, List<String> tokens) {
+        switch (cmd) {
+            case "SET":
+            case "SETNX":
+            case "GETSET":
+                return tokens.size() > 2 ? tokens.get(2).length() : -1;
+            case "SETEX":
+            case "PSETEX":
+                return tokens.size() > 3 ? tokens.get(3).length() : -1;
+            case "MSET":
+                if (tokens.size() < 3) return -1;
+                long msetSize = 0;
+                for (int i = 2; i < tokens.size(); i += 2) {
+                    msetSize += tokens.get(i).length();
+                }
+                return msetSize;
+            case "HSET":
+            case "HSETNX":
+                return tokens.size() > 3 ? tokens.get(2).length() + tokens.get(3).length() : -1;
+            case "HMSET":
+                if (tokens.size() < 4) return -1;
+                long hmsetSize = 0;
+                for (int i = 3; i < tokens.size(); i += 2) {
+                    hmsetSize += tokens.get(i).length();
+                }
+                return hmsetSize;
+            case "SADD":
+                if (tokens.size() < 3) return -1;
+                long saddSize = 0;
+                for (int i = 2; i < tokens.size(); i++) {
+                    saddSize += tokens.get(i).length();
+                }
+                return saddSize;
+            case "ZADD":
+                if (tokens.size() < 4) return -1;
+                long zaddSize = 0;
+                for (int i = 3; i < tokens.size(); i += 2) {
+                    zaddSize += tokens.get(i).length();
+                }
+                return zaddSize;
+            case "RESTORE":
+                return tokens.size() > 3 ? tokens.get(3).length() : -1;
+            default:
+                return -1;
         }
     }
 }

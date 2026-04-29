@@ -183,4 +183,76 @@ public class CommandParserTest {
         assertNull(CommandParser.parse(""));
         assertNull(CommandParser.parse(null));
     }
+
+    @Test
+    public void testValueSizeForSet() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"SET\" \"key1\" \"hello\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(5, cmd.getValueSize()); // "hello".length()
+    }
+
+    @Test
+    public void testValueSizeForSetex() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"SETEX\" \"key1\" \"100\" \"hello\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(5, cmd.getValueSize()); // "hello".length()
+    }
+
+    @Test
+    public void testValueSizeForHset() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"HSET\" \"hk\" \"f1\" \"v1\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(4, cmd.getValueSize()); // "f1".length() + "v1".length() = 2+2
+    }
+
+    @Test
+    public void testValueSizeForSadd() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"SADD\" \"sk\" \"m1\" \"m22\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(5, cmd.getValueSize()); // "m1".length() + "m22".length() = 2+3
+    }
+
+    @Test
+    public void testValueSizeForZadd() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"ZADD\" \"zk\" \"1.0\" \"m1\" \"2.0\" \"m22\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(5, cmd.getValueSize()); // "m1".length() + "m22".length() = 2+3
+    }
+
+    @Test
+    public void testValueSizeForMset() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"MSET\" \"k1\" \"v1\" \"k2\" \"v22\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(5, cmd.getValueSize()); // "v1".length() + "v22".length() = 2+3
+    }
+
+    @Test
+    public void testValueSizeForSetnx() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"SETNX\" \"lockkey\" \"lockval\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(7, cmd.getValueSize()); // "lockval".length()
+    }
+
+    @Test
+    public void testValueSizeForExpireIsZero() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"EXPIRE\" \"key1\" \"600\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(-1, cmd.getValueSize()); // TTL-only commands have no value
+    }
+
+    @Test
+    public void testValueSizeForRestore() {
+        String line = "1234567890.123456 [0 127.0.0.1:12345] \"RESTORE\" \"rk\" \"0\" \"serialized_value\"";
+        ParsedCommand cmd = CommandParser.parse(line);
+        assertNotNull(cmd);
+        assertEquals(16, cmd.getValueSize()); // "serialized_value".length()
+    }
 }
