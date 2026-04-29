@@ -30,6 +30,8 @@ public class MemoryIncrementAnalyzer {
     private volatile boolean reportPrinted;
     private volatile double durationSec;
     private volatile MonitorStream monitorStream;
+    private ScheduledExecutorService periodicPrinter;
+    private volatile long startTimeMs;
 
     public MemoryIncrementAnalyzer(Args args) {
         this.args = args;
@@ -70,20 +72,47 @@ public class MemoryIncrementAnalyzer {
         out.println("Config: " + args);
         out.println();
 
+        this.startTimeMs = System.currentTimeMillis();
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             interrupted = true;
             if (monitorStream != null) {
                 monitorStream.stop();
+            }
+            if (periodicPrinter != null) {
+                periodicPrinter.shutdownNow();
             }
             if (!reportPrinted) {
                 printReport();
             }
         }, "ShutdownHook"));
 
+        if (args.getPrintIntervalSec() > 0) {
+            periodicPrinter = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "PeriodicPrinter");
+                t.setDaemon(true);
+                return t;
+            });
+            periodicPrinter.scheduleAtFixedRate(
+                    this::printIntermediateLive,
+                    args.getPrintIntervalSec(),
+                    args.getPrintIntervalSec(),
+                    TimeUnit.SECONDS);
+        }
+
         memorySampler.start();
         ttlSampler.start();
 
         runMonitorLoop();
+
+        if (periodicPrinter != null) {
+            periodicPrinter.shutdown();
+            try {
+                periodicPrinter.awaitTermination(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
 
         if (!reportPrinted) {
             printReport();
@@ -107,13 +136,31 @@ public class MemoryIncrementAnalyzer {
             return;
         }
 
+        this.startTimeMs = System.currentTimeMillis();
+
         // Register shutdown hook after confirming there is work to do
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             interrupted = true;
+            if (periodicPrinter != null) {
+                periodicPrinter.shutdownNow();
+            }
             if (!reportPrinted) {
                 printReportFile();
             }
         }, "ShutdownHook"));
+
+        if (args.getPrintIntervalSec() > 0) {
+            periodicPrinter = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "PeriodicPrinter");
+                t.setDaemon(true);
+                return t;
+            });
+            periodicPrinter.scheduleAtFixedRate(
+                    this::printIntermediateFile,
+                    args.getPrintIntervalSec(),
+                    args.getPrintIntervalSec(),
+                    TimeUnit.SECONDS);
+        }
 
         out.println("Found " + files.size() + " .log file(s)");
         out.println();
@@ -158,6 +205,15 @@ public class MemoryIncrementAnalyzer {
         }
 
         this.durationSec = (globalLastTs > globalFirstTs) ? (globalLastTs - globalFirstTs) : 0;
+
+        if (periodicPrinter != null) {
+            periodicPrinter.shutdown();
+            try {
+                periodicPrinter.awaitTermination(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
 
         if (!reportPrinted) {
             printReportFile();
@@ -266,6 +322,48 @@ public class MemoryIncrementAnalyzer {
         }
     }
 
+    private void printIntermediateLive() {
+        if (aggregator.getTotalWriteCount() == 0) {
+            return;
+        }
+        if (reportPrinted) {
+            return;
+        }
+
+        populateNoTtlStore();
+
+        PrintStream out = System.out;
+        if (args.getOutput() == OutputFormat.JSON) {
+            printer.printJson(aggregator, noTtlStore, args.getTopN(), out);
+        } else {
+            long elapsed = (System.currentTimeMillis() - startTimeMs) / 1000;
+            out.println();
+            out.println("--- Intermediate Report (elapsed: " + elapsed + "s) ---");
+            printer.printConsole(aggregator, noTtlStore, args.getTopN(), out);
+        }
+    }
+
+    private void printIntermediateFile() {
+        if (aggregator.getTotalWriteCount() == 0) {
+            return;
+        }
+        if (reportPrinted) {
+            return;
+        }
+
+        populateNoTtlStore();
+
+        PrintStream out = System.out;
+        if (args.getOutput() == OutputFormat.JSON) {
+            printer.printJsonFile(aggregator, noTtlStore, args.getTopN(), durationSec, out);
+        } else {
+            long elapsed = (System.currentTimeMillis() - startTimeMs) / 1000;
+            out.println();
+            out.println("--- Intermediate Report (elapsed: " + elapsed + "s) ---");
+            printer.printConsoleFile(aggregator, noTtlStore, args.getTopN(), durationSec, out);
+        }
+    }
+
     /**
      * Prints the final report. Can be called from the shutdown hook or after
      * normal completion.
@@ -342,5 +440,8 @@ public class MemoryIncrementAnalyzer {
         out.println("  --top-n=<n>                Top N patterns to report (default: 20)");
         out.println("  --output=<console|json>    Output format (default: console)");
         out.println("  --password=<password>      Redis password (default: none)");
+        out.println("  --source=<live|file>       Data source mode (default: live)");
+        out.println("  --input-dir=<path>         Input directory for file mode");
+        out.println("  --print-interval=<sec>      Seconds between intermediate reports (default: 30, 0=off)");
     }
 }
