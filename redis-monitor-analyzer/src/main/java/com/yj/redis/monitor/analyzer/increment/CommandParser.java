@@ -146,6 +146,7 @@ public class CommandParser {
             }
         } catch (NumberFormatException e) {
             // Fall through
+            System.err.println(e.getMessage());
         }
         return null;
     }
