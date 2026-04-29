@@ -40,6 +40,10 @@ public class MemoryIncrementAnalyzer {
     }
 
     public void run() {
+        System.out.println("Redis Memory Increment Analyzer");
+        System.out.println("Config: " + args);
+        System.out.println();
+
         // Register shutdown hook for Ctrl-C
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             interrupted = true;

@@ -164,6 +164,18 @@ public class Args {
         return password;
     }
 
+    @Override
+    public String toString() {
+        return "host=" + host + ", port=" + port +
+                ", duration=" + durationSec + "s" +
+                ", samplesPerPattern=" + samplesPerPattern +
+                ", ttlSamplesPerPattern=" + ttlSamplesPerPattern +
+                ", upgradeThreshold=" + upgradeThreshold +
+                ", topN=" + topN +
+                ", output=" + output.name().toLowerCase() +
+                (password != null ? ", password=***" : "");
+    }
+
     private static class Builder {
         private String host = MonitorConstants.DEFAULT_REDIS_HOST;
         private int port = MonitorConstants.DEFAULT_REDIS_PORT;
