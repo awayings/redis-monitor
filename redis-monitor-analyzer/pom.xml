@@ -33,4 +33,17 @@
             <artifactId>mockito-core</artifactId>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <configuration>
+                    <mainClass>com.yj.redis.monitor.analyzer.increment.MemoryIncrementAnalyzer</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
