@@ -2,6 +2,7 @@ package com.yj.redis.monitor.analyzer.increment;
 
 import org.junit.Test;
 import java.util.List;
+import java.util.Map;
 import static org.junit.Assert.*;
 
 public class PatternStatsAggregatorTest {
@@ -117,9 +118,9 @@ public class PatternStatsAggregatorTest {
         agg.recordWrite("a:*");
         agg.recordWrite("b:*");
 
-        java.util.Map<String, Long> snapshot = agg.getWriteCountSnapshot();
-        assertEquals(2L, snapshot.get("a:*").longValue());
-        assertEquals(1L, snapshot.get("b:*").longValue());
+        Map<String, Long> snapshot = agg.getWriteCountSnapshot();
+        assertEquals(Long.valueOf(2), snapshot.get("a:*"));
+        assertEquals(Long.valueOf(1), snapshot.get("b:*"));
         assertEquals(2, snapshot.size());
     }
 
@@ -128,11 +129,11 @@ public class PatternStatsAggregatorTest {
         PatternStatsAggregator agg = new PatternStatsAggregator(5, 10);
         agg.recordWrite("a:*");
 
-        java.util.Map<String, Long> snap1 = agg.getWriteCountSnapshot();
+        Map<String, Long> snap1 = agg.getWriteCountSnapshot();
         agg.recordWrite("a:*");
-        java.util.Map<String, Long> snap2 = agg.getWriteCountSnapshot();
+        Map<String, Long> snap2 = agg.getWriteCountSnapshot();
 
-        assertEquals(1L, snap1.get("a:*").longValue());
-        assertEquals(2L, snap2.get("a:*").longValue());
+        assertEquals(Long.valueOf(1), snap1.get("a:*"));
+        assertEquals(Long.valueOf(2), snap2.get("a:*"));
     }
 }
