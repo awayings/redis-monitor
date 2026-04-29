@@ -4,7 +4,10 @@ import com.yj.redis.monitor.core.RedisConnectionFactory;
 import redis.clients.jedis.Jedis;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -91,6 +94,15 @@ public class MemoryIncrementAnalyzer {
         System.out.println("Config: " + args);
         System.out.println();
 
+        FileLineSource source = new FileLineSource(args.getInputDir());
+        List<File> files = source.listLogFiles();
+
+        if (files.isEmpty()) {
+            System.out.println("Warning: No .log files found in " + args.getInputDir());
+            return;
+        }
+
+        // Register shutdown hook after confirming there is work to do
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             interrupted = true;
             if (!reportPrinted) {
@@ -98,26 +110,21 @@ public class MemoryIncrementAnalyzer {
             }
         }, "ShutdownHook"));
 
-        FileLineSource source = new FileLineSource(args.getInputDir());
-        java.util.List<File> files = source.listLogFiles();
-
-        if (files.isEmpty()) {
-            System.out.println("Warning: No .log files found in " + args.getInputDir());
-            return;
-        }
-
         System.out.println("Found " + files.size() + " .log file(s)");
         System.out.println();
+
+        // Per-file progress goes to stdout for console, stderr for JSON
+        PrintStream perFileOut = args.getOutput() == OutputFormat.JSON ? System.err : System.out;
 
         double globalFirstTs = Double.MAX_VALUE;
         double globalLastTs = 0;
 
         for (int i = 0; i < files.size() && !interrupted; i++) {
-            java.io.File file = files.get(i);
+            File file = files.get(i);
             String fileName = file.getName();
-            System.out.println("=== File: " + fileName + " (" + (i + 1) + "/" + files.size() + ") ===");
+            perFileOut.println("=== File: " + fileName + " (" + (i + 1) + "/" + files.size() + ") ===");
 
-            java.util.Map<String, Long> writesBefore = aggregator.getWriteCountSnapshot();
+            Map<String, Long> writesBefore = aggregator.getWriteCountSnapshot();
 
             try {
                 double[] ts = source.readFile(file, new MonitorLineHandler() {
@@ -135,12 +142,12 @@ public class MemoryIncrementAnalyzer {
                     if (ts[0] < globalFirstTs) globalFirstTs = ts[0];
                     if (ts[1] > globalLastTs) globalLastTs = ts[1];
 
-                    java.util.Map<String, Long> writesAfter = aggregator.getWriteCountSnapshot();
+                    Map<String, Long> writesAfter = aggregator.getWriteCountSnapshot();
                     double fileDuration = ts[1] - ts[0];
                     printer.printPerFileSummary(fileName, writesBefore, writesAfter,
-                            fileDuration, args.getTopN(), System.out);
+                            fileDuration, args.getTopN(), perFileOut);
                 }
-            } catch (java.io.IOException e) {
+            } catch (IOException e) {
                 System.err.println("[File] Error reading " + fileName + ": " + e.getMessage());
             }
         }
