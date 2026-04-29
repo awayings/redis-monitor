@@ -149,4 +149,27 @@ public class ArgsTest {
         assertEquals(Args.Source.FILE, args.getSource());
         assertEquals("/tmp/batch", args.getInputDir());
     }
+
+    @Test
+    public void testParsePrintIntervalDefault() {
+        Args args = Args.parse(new String[]{});
+        assertEquals(30, args.getPrintIntervalSec());
+    }
+
+    @Test
+    public void testParsePrintIntervalCustom() {
+        Args args = Args.parse(new String[]{"--print-interval=10"});
+        assertEquals(10, args.getPrintIntervalSec());
+    }
+
+    @Test
+    public void testParsePrintIntervalZero() {
+        Args args = Args.parse(new String[]{"--print-interval=0"});
+        assertEquals(0, args.getPrintIntervalSec());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testInvalidPrintIntervalNegativeThrows() {
+        Args.parse(new String[]{"--print-interval=-1"});
+    }
 }
