@@ -9,13 +9,16 @@ public class PatternClusterState {
 
     private String currentPattern;
     private int keyCount;
+    private final String delimiter;
     private final List<SegmentType> segmentTypes;
     private final List<String> fixedValues;
     private final List<Set<String>> distinctValues;
 
-    public PatternClusterState(String pattern, List<SegmentType> segmentTypes, List<String> fixedValues) {
+    public PatternClusterState(String pattern, List<SegmentType> segmentTypes,
+                                List<String> fixedValues, String delimiter) {
         this.currentPattern = pattern;
         this.keyCount = 0;
+        this.delimiter = delimiter;
         this.segmentTypes = segmentTypes;
         this.fixedValues = fixedValues;
         this.distinctValues = new ArrayList<>(segmentTypes.size());
@@ -88,11 +91,15 @@ public class PatternClusterState {
      * Rebuilds currentPattern from segmentTypes and fixedValues.
      * FIXED segments use their fixed value, all others use "*".
      */
+    public String getDelimiter() {
+        return delimiter;
+    }
+
     private void rebuildPattern() {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < segmentTypes.size(); i++) {
             if (i > 0) {
-                sb.append(":");
+                sb.append(delimiter);
             }
             if (segmentTypes.get(i) == SegmentType.FIXED) {
                 sb.append(fixedValues.get(i));
