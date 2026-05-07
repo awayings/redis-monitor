@@ -1,6 +1,11 @@
 package com.yj.redis.monitor.analyzer.increment;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class PatternStats {
+
+    private static final int MAX_SAMPLE_KEYS = 10;
 
     private final String pattern;
     private long writeCount;
@@ -8,6 +13,7 @@ public class PatternStats {
     private final ReservoirSampler<Long> memorySamples;
     private boolean hasTtlFromCommand;
     private String representativeKey;
+    private final List<String> sampleKeys = new ArrayList<>();
 
     public PatternStats(String pattern, int ttlSampleCapacity, int memorySampleCapacity) {
         this.pattern = pattern;
@@ -107,5 +113,15 @@ public class PatternStats {
 
     public void setRepresentativeKey(String representativeKey) {
         this.representativeKey = representativeKey;
+    }
+
+    public void addSampleKey(String key) {
+        if (sampleKeys.size() < MAX_SAMPLE_KEYS) {
+            sampleKeys.add(key);
+        }
+    }
+
+    public List<String> getSampleKeys() {
+        return sampleKeys;
     }
 }

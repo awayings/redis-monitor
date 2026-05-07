@@ -8,11 +8,17 @@ import java.util.Set;
 
 public class Args {
 
+    public enum Source {
+        LIVE, FILE
+    }
+
     private static final Set<String> VALID_KEYS = new HashSet<>(Arrays.asList(
             "host", "port", "duration", "samples-per-pattern",
-            "ttl-samples-per-pattern", "upgrade-threshold", "output", "top-n", "password"
+            "ttl-samples-per-pattern", "upgrade-threshold", "output", "top-n", "password",
+            "source", "input-dir", "print-interval"
     ));
 
+    private final Source source;
     private final String host;
     private final int port;
     private final int durationSec;
@@ -22,8 +28,11 @@ public class Args {
     private final OutputFormat output;
     private final int topN;
     private final String password;
+    private final String inputDir;
+    private final int printIntervalSec;
 
     private Args(Builder builder) {
+        this.source = builder.source;
         this.host = builder.host;
         this.port = builder.port;
         this.durationSec = builder.durationSec;
@@ -33,6 +42,8 @@ public class Args {
         this.output = builder.output;
         this.topN = builder.topN;
         this.password = builder.password;
+        this.inputDir = builder.inputDir;
+        this.printIntervalSec = builder.printIntervalSec;
     }
 
     /**
@@ -95,10 +106,28 @@ public class Args {
                     case "password":
                         builder.password = value;
                         break;
+                    case "source":
+                        try {
+                            builder.source = Source.valueOf(value.toUpperCase());
+                        } catch (IllegalArgumentException e) {
+                            throw new IllegalArgumentException(
+                                    "Invalid source value: " + value + ". Must be: live, file");
+                        }
+                        break;
+                    case "input-dir":
+                        builder.inputDir = value;
+                        break;
+                    case "print-interval":
+                        builder.printIntervalSec = parseNonNegativeInt("print-interval", value);
+                        break;
                     default:
                         throw new IllegalArgumentException("Unknown argument: --" + key);
                 }
             }
+        }
+
+        if (builder.source == Source.FILE && builder.inputDir == null) {
+            throw new IllegalArgumentException("--input-dir is required when --source=file");
         }
 
         return new Args(builder);
@@ -109,6 +138,18 @@ public class Args {
             int parsed = Integer.parseInt(value);
             if (parsed <= 0) {
                 throw new IllegalArgumentException(name + " must be positive, got: " + value);
+            }
+            return parsed;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid " + name + " value: " + value, e);
+        }
+    }
+
+    private static int parseNonNegativeInt(String name, String value) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 0) {
+                throw new IllegalArgumentException(name + " must be non-negative, got: " + value);
             }
             return parsed;
         } catch (NumberFormatException e) {
@@ -127,6 +168,10 @@ public class Args {
             throw new IllegalArgumentException("Invalid port value: " + value, e);
         }
     }
+
+    public Source getSource() { return source; }
+
+    public String getInputDir() { return inputDir; }
 
     public String getHost() {
         return host;
@@ -164,7 +209,35 @@ public class Args {
         return password;
     }
 
+    public int getPrintIntervalSec() {
+        return printIntervalSec;
+    }
+
+    @Override
+    public String toString() {
+        if (source == Source.FILE) {
+            return "source=file, inputDir=" + inputDir +
+                    ", duration=" + durationSec + "s" +
+                    ", samplesPerPattern=" + samplesPerPattern +
+                    ", ttlSamplesPerPattern=" + ttlSamplesPerPattern +
+                    ", upgradeThreshold=" + upgradeThreshold +
+                    ", topN=" + topN +
+                    ", output=" + output.name().toLowerCase() +
+                    ", printInterval=" + printIntervalSec + "s";
+        }
+        return "source=live, host=" + host + ", port=" + port +
+                ", duration=" + durationSec + "s" +
+                ", samplesPerPattern=" + samplesPerPattern +
+                ", ttlSamplesPerPattern=" + ttlSamplesPerPattern +
+                ", upgradeThreshold=" + upgradeThreshold +
+                ", topN=" + topN +
+                ", output=" + output.name().toLowerCase() +
+                (password != null ? ", password=***" : "") +
+                ", printInterval=" + printIntervalSec + "s";
+    }
+
     private static class Builder {
+        private Source source = Source.LIVE;
         private String host = MonitorConstants.DEFAULT_REDIS_HOST;
         private int port = MonitorConstants.DEFAULT_REDIS_PORT;
         private int durationSec = 300;
@@ -174,5 +247,7 @@ public class Args {
         private OutputFormat output = OutputFormat.CONSOLE;
         private int topN = 20;
         private String password = null;
+        private String inputDir = null;
+        private int printIntervalSec = 30;
     }
 }

@@ -2,7 +2,9 @@ package com.yj.redis.monitor.analyzer.increment;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -110,5 +112,27 @@ public class PatternStatsAggregator {
      */
     public int getPatternCount() {
         return statsMap.size();
+    }
+
+    /**
+     * Adds a sample key for the given pattern.
+     */
+    public void addSampleKey(String pattern, String key) {
+        PatternStats stats = statsMap.get(pattern);
+        if (stats != null) {
+            stats.addSampleKey(key);
+        }
+    }
+
+    /**
+     * Returns a snapshot of write counts per pattern.
+     * The returned map is a detached copy.
+     */
+    public Map<String, Long> getWriteCountSnapshot() {
+        Map<String, Long> snapshot = new HashMap<>();
+        for (Map.Entry<String, PatternStats> entry : statsMap.entrySet()) {
+            snapshot.put(entry.getKey(), entry.getValue().getWriteCount());
+        }
+        return snapshot;
     }
 }

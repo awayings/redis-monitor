@@ -3,9 +3,16 @@ package com.yj.redis.monitor.analyzer.increment;
 import com.yj.redis.monitor.core.RedisConnectionFactory;
 import redis.clients.jedis.Jedis;
 
+import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class MemoryIncrementAnalyzer {
 
@@ -21,51 +28,196 @@ public class MemoryIncrementAnalyzer {
 
     private volatile boolean interrupted;
     private volatile boolean reportPrinted;
+    private volatile double durationSec;
     private volatile MonitorStream monitorStream;
+    private ScheduledExecutorService periodicPrinter;
+    private volatile long startTimeMs;
 
     public MemoryIncrementAnalyzer(Args args) {
         this.args = args;
         this.clusterer = new PatternClusterer(args.getUpgradeThreshold(), 10000);
         this.aggregator = new PatternStatsAggregator(
                 args.getTtlSamplesPerPattern(), args.getSamplesPerPattern());
-        this.printer = new ReportPrinter(args.getHost(), args.getPort(),
-                args.getDurationSec(), args.getSamplesPerPattern());
         this.noTtlStore = new NoTtlKeyStore();
-        this.sampleQueue = new LinkedBlockingQueue<>();
-        this.factory = new RedisConnectionFactory(args.getHost(), args.getPort(), args.getPassword());
-        this.memorySampler = new MemorySamplerThread(factory, sampleQueue);
-        this.ttlSampler = new TtlSampler(factory, aggregator, args.getTtlSamplesPerPattern());
         this.interrupted = false;
         this.reportPrinted = false;
+
+        if (args.getSource() == Args.Source.LIVE) {
+            this.sampleQueue = new LinkedBlockingQueue<>();
+            this.factory = new RedisConnectionFactory(args.getHost(), args.getPort(), args.getPassword());
+            this.memorySampler = new MemorySamplerThread(factory, sampleQueue);
+            this.ttlSampler = new TtlSampler(factory, aggregator, args.getTtlSamplesPerPattern());
+            this.printer = new ReportPrinter(args.getHost(), args.getPort(),
+                    args.getDurationSec(), args.getSamplesPerPattern());
+        } else {
+            this.sampleQueue = null;
+            this.factory = null;
+            this.memorySampler = null;
+            this.ttlSampler = null;
+            this.printer = ReportPrinter.forFileMode(args.getInputDir());
+        }
     }
 
     public void run() {
-        // Register shutdown hook for Ctrl-C
+        if (args.getSource() == Args.Source.FILE) {
+            runFileMode();
+        } else {
+            runLiveMode();
+        }
+    }
+
+    private void runLiveMode() {
+        PrintStream out = args.getOutput() == OutputFormat.JSON ? System.err : System.out;
+        out.println("Redis Memory Increment Analyzer");
+        out.println("Config: " + args);
+        out.println();
+
+        this.startTimeMs = System.currentTimeMillis();
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             interrupted = true;
             if (monitorStream != null) {
                 monitorStream.stop();
+            }
+            if (periodicPrinter != null) {
+                periodicPrinter.shutdownNow();
             }
             if (!reportPrinted) {
                 printReport();
             }
         }, "ShutdownHook"));
 
-        // Start sampler threads
+        if (args.getPrintIntervalSec() > 0) {
+            periodicPrinter = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "PeriodicPrinter");
+                t.setDaemon(true);
+                return t;
+            });
+            periodicPrinter.scheduleAtFixedRate(
+                    this::printIntermediateLive,
+                    args.getPrintIntervalSec(),
+                    args.getPrintIntervalSec(),
+                    TimeUnit.SECONDS);
+        }
+
         memorySampler.start();
         ttlSampler.start();
 
-        // Run MONITOR loop with retries
         runMonitorLoop();
 
-        // Print final report
+        if (periodicPrinter != null) {
+            periodicPrinter.shutdown();
+            try {
+                periodicPrinter.awaitTermination(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
         if (!reportPrinted) {
             printReport();
         }
 
-        // Shutdown sampler threads
         memorySampler.shutdown();
         ttlSampler.shutdown();
+    }
+
+    private void runFileMode() {
+        PrintStream out = args.getOutput() == OutputFormat.JSON ? System.err : System.out;
+        out.println("Redis Memory Increment Analyzer (File Mode)");
+        out.println("Config: " + args);
+        out.println();
+
+        FileLineSource source = new FileLineSource(args.getInputDir());
+        List<File> files = source.listLogFiles();
+
+        if (files.isEmpty()) {
+            out.println("Warning: No .log files found in " + args.getInputDir());
+            return;
+        }
+
+        this.startTimeMs = System.currentTimeMillis();
+
+        // Register shutdown hook after confirming there is work to do
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            interrupted = true;
+            if (periodicPrinter != null) {
+                periodicPrinter.shutdownNow();
+            }
+            if (!reportPrinted) {
+                printReportFile();
+            }
+        }, "ShutdownHook"));
+
+        if (args.getPrintIntervalSec() > 0) {
+            periodicPrinter = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "PeriodicPrinter");
+                t.setDaemon(true);
+                return t;
+            });
+            periodicPrinter.scheduleAtFixedRate(
+                    this::printIntermediateFile,
+                    args.getPrintIntervalSec(),
+                    args.getPrintIntervalSec(),
+                    TimeUnit.SECONDS);
+        }
+
+        out.println("Found " + files.size() + " .log file(s)");
+        out.println();
+
+        // Per-file progress goes to stdout for console, stderr for JSON
+        PrintStream perFileOut = args.getOutput() == OutputFormat.JSON ? System.err : System.out;
+
+        double globalFirstTs = Double.MAX_VALUE;
+        double globalLastTs = 0;
+
+        for (int i = 0; i < files.size() && !interrupted; i++) {
+            File file = files.get(i);
+            String fileName = file.getName();
+            perFileOut.println("=== File: " + fileName + " (" + (i + 1) + "/" + files.size() + ") ===");
+
+            Map<String, Long> writesBefore = aggregator.getWriteCountSnapshot();
+
+            try {
+                double[] ts = source.readFile(file, new MonitorLineHandler() {
+                    @Override
+                    public void onLine(String line) {
+                        processLine(line);
+                    }
+                    @Override
+                    public void onError(Exception e) {
+                        System.err.println("[File] Error: " + e.getMessage());
+                    }
+                });
+
+                if (ts[0] >= 0) {
+                    if (ts[0] < globalFirstTs) globalFirstTs = ts[0];
+                    if (ts[1] > globalLastTs) globalLastTs = ts[1];
+
+                    Map<String, Long> writesAfter = aggregator.getWriteCountSnapshot();
+                    double fileDuration = ts[1] - ts[0];
+                    printer.printPerFileSummary(fileName, writesBefore, writesAfter,
+                            fileDuration, args.getTopN(), perFileOut);
+                }
+            } catch (IOException e) {
+                System.err.println("[File] Error reading " + fileName + ": " + e.getMessage());
+            }
+        }
+
+        this.durationSec = (globalLastTs > globalFirstTs) ? (globalLastTs - globalFirstTs) : 0;
+
+        if (periodicPrinter != null) {
+            periodicPrinter.shutdown();
+            try {
+                periodicPrinter.awaitTermination(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        if (!reportPrinted) {
+            printReportFile();
+        }
     }
 
     private void runMonitorLoop() {
@@ -126,26 +278,93 @@ public class MemoryIncrementAnalyzer {
 
         String pattern = clusterer.cluster(cmd.getKey());
 
+        if ("*".equals(pattern)) {
+            aggregator.addSampleKey(pattern, cmd.getKey());
+        }
+
         if (cmd.isWriteCommand()) {
             aggregator.recordWrite(pattern);
             aggregator.setRepresentativeKeyIfAbsent(pattern, cmd.getKey());
 
-            if (cmd.getTtlMillis() != null) {
-                aggregator.addTtlSample(pattern, cmd.getTtlMillis());
-                aggregator.markTtlFromCommand(pattern);
-            } else {
-                ttlSampler.scheduleDelayedTtl(cmd.getKey(), pattern);
-            }
+            if (args.getSource() == Args.Source.LIVE) {
+                if (cmd.getTtlMillis() != null) {
+                    aggregator.addTtlSample(pattern, cmd.getTtlMillis());
+                    aggregator.markTtlFromCommand(pattern);
+                } else {
+                    ttlSampler.scheduleDelayedTtl(cmd.getKey(), pattern);
+                }
 
-            // Enqueue for memory sampling if pattern hasn't reached quota
-            PatternStats stats = aggregator.getStats(pattern);
-            if (stats != null && stats.getMemorySampleCount() < args.getSamplesPerPattern()) {
-                String key = cmd.getKey();
-                sampleQueue.offer(new SampleTask(key, memory -> aggregator.addMemorySample(pattern, memory)));
+                PatternStats stats = aggregator.getStats(pattern);
+                if (stats != null && stats.getMemorySampleCount() < args.getSamplesPerPattern()) {
+                    sampleQueue.offer(new SampleTask(cmd.getKey(),
+                            memory -> aggregator.addMemorySample(pattern, memory)));
+                }
+            } else {
+                if (cmd.getTtlMillis() != null) {
+                    aggregator.addTtlSample(pattern, cmd.getTtlMillis());
+                    aggregator.markTtlFromCommand(pattern);
+                }
+
+                if (cmd.getValueSize() >= 0) {
+                    aggregator.addMemorySample(pattern, cmd.getValueSize());
+                }
             }
         } else if (cmd.getTtlMillis() != null) {
             aggregator.addTtlSample(pattern, cmd.getTtlMillis());
             aggregator.markTtlFromCommand(pattern);
+        }
+    }
+
+    private void populateNoTtlStore() {
+        for (PatternStats stats : aggregator.getAllStats()) {
+            if (!stats.getTtlSamples().isEmpty() && stats.getAvgTtlSeconds() <= 0) {
+                long memoryBytes = (long) stats.getAvgMemoryBytes();
+                String repKey = stats.getRepresentativeKey() != null
+                        ? stats.getRepresentativeKey() : stats.getPattern();
+                noTtlStore.offer(repKey, stats.getPattern(), memoryBytes, "TTL");
+            }
+        }
+    }
+
+    private void printIntermediateLive() {
+        if (aggregator.getTotalWriteCount() == 0) {
+            return;
+        }
+        if (reportPrinted) {
+            return;
+        }
+
+        populateNoTtlStore();
+
+        PrintStream out = System.out;
+        if (args.getOutput() == OutputFormat.JSON) {
+            printer.printJson(aggregator, noTtlStore, args.getTopN(), out);
+        } else {
+            long elapsed = (System.currentTimeMillis() - startTimeMs) / 1000;
+            out.println();
+            out.println("--- Intermediate Report (elapsed: " + elapsed + "s) ---");
+            printer.printConsole(aggregator, noTtlStore, args.getTopN(), out);
+        }
+    }
+
+    private void printIntermediateFile() {
+        if (aggregator.getTotalWriteCount() == 0) {
+            return;
+        }
+        if (reportPrinted) {
+            return;
+        }
+
+        populateNoTtlStore();
+
+        PrintStream out = System.out;
+        if (args.getOutput() == OutputFormat.JSON) {
+            printer.printJsonFile(aggregator, noTtlStore, args.getTopN(), durationSec, out);
+        } else {
+            long elapsed = (System.currentTimeMillis() - startTimeMs) / 1000;
+            out.println();
+            out.println("--- Intermediate Report (elapsed: " + elapsed + "s) ---");
+            printer.printConsoleFile(aggregator, noTtlStore, args.getTopN(), durationSec, out);
         }
     }
 
@@ -159,16 +378,7 @@ public class MemoryIncrementAnalyzer {
         }
         reportPrinted = true;
 
-        // Move patterns with no TTL to the noTtlStore
-        for (PatternStats stats : aggregator.getAllStats()) {
-            if (!stats.getTtlSamples().isEmpty() && stats.getAvgTtlSeconds() <= 0) {
-                long memoryBytes = (long) stats.getAvgMemoryBytes();
-                String repKey = stats.getRepresentativeKey() != null
-                        ? stats.getRepresentativeKey() : stats.getPattern();
-                noTtlStore.offer(repKey, stats.getPattern(),
-                        memoryBytes, "TTL");
-            }
-        }
+        populateNoTtlStore();
 
         PrintStream out = System.out;
         if (args.getOutput() == OutputFormat.JSON) {
@@ -178,7 +388,27 @@ public class MemoryIncrementAnalyzer {
         }
 
         if (interrupted) {
-            out.println("[Interrupted by user — partial report shown]");
+            out.println("[Interrupted by user -- partial report shown]");
+        }
+    }
+
+    private void printReportFile() {
+        if (reportPrinted) {
+            return;
+        }
+        reportPrinted = true;
+
+        populateNoTtlStore();
+
+        java.io.PrintStream out = System.out;
+        if (args.getOutput() == OutputFormat.JSON) {
+            printer.printJsonFile(aggregator, noTtlStore, args.getTopN(), durationSec, out);
+        } else {
+            printer.printConsoleFile(aggregator, noTtlStore, args.getTopN(), durationSec, out);
+        }
+
+        if (interrupted) {
+            out.println("[Interrupted by user -- partial report shown]");
         }
     }
 
@@ -214,5 +444,8 @@ public class MemoryIncrementAnalyzer {
         out.println("  --top-n=<n>                Top N patterns to report (default: 20)");
         out.println("  --output=<console|json>    Output format (default: console)");
         out.println("  --password=<password>      Redis password (default: none)");
+        out.println("  --source=<live|file>       Data source mode (default: live)");
+        out.println("  --input-dir=<path>         Input directory for file mode");
+        out.println("  --print-interval=<sec>      Seconds between intermediate reports (default: 30, 0=off)");
     }
 }

@@ -1,5 +1,6 @@
 package com.yj.redis.monitor.analyzer.increment;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -44,8 +45,10 @@ public class CommandParser {
             if (key == null || key.isEmpty()) {
                 return null;
             }
+            key = deserializeKeyIfNeeded(key);
             Long ttl = extractInlineTtl(cmd, tokens);
-            return new ParsedCommand(cmd, key, ttl, monitorLine, true);
+            long valueSize = computeValueSize(cmd, tokens);
+            return new ParsedCommand(cmd, key, ttl, monitorLine, true, valueSize);
         }
 
         if (TTL_COMMANDS.contains(cmd)) {
@@ -53,6 +56,7 @@ public class CommandParser {
             if (key == null || key.isEmpty()) {
                 return null;
             }
+            key = deserializeKeyIfNeeded(key);
             String ttlStr = tokens.size() > 2 ? tokens.get(2) : null;
             if (ttlStr == null || ttlStr.isEmpty()) {
                 return null;
@@ -61,7 +65,7 @@ public class CommandParser {
             if (ttl == null) {
                 return null;
             }
-            return new ParsedCommand(cmd, key, ttl, monitorLine, false);
+            return new ParsedCommand(cmd, key, ttl, monitorLine, false, -1);
         }
 
         return null;
@@ -86,11 +90,19 @@ public class CommandParser {
             }
 
             int quoteEnd = quoteStart + 1;
-            while (quoteEnd < after.length() && after.charAt(quoteEnd) != '"') {
-                quoteEnd++;
+            while (quoteEnd < after.length()) {
+                char c = after.charAt(quoteEnd);
+                if (c == '\\' && quoteEnd + 1 < after.length()) {
+                    // Skip escaped character (e.g. \", \\, \xNN, \n, \r, \t)
+                    // For \xNN we skip 4 chars total, handled below
+                    quoteEnd += 2;
+                } else if (c == '"') {
+                    break;
+                } else {
+                    quoteEnd++;
+                }
             }
             if (quoteEnd >= after.length()) {
-                // Unclosed quote, skip this and any subsequent tokens
                 break;
             }
 
@@ -99,6 +111,68 @@ public class CommandParser {
         }
 
         return tokens;
+    }
+
+    private static String deserializeKeyIfNeeded(String key) {
+        if (key == null || !key.contains("\\")) {
+            return key;
+        }
+        byte[] bytes = decodeEscapesToBytes(key);
+        if (bytes.length == 0) {
+            return key;
+        }
+        if (key.contains("\\x")) {
+            return new KeyDeserializer(true).deserialize(bytes);
+        }
+        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Decodes Redis MONITOR escape sequences into raw bytes.
+     * Handles: \xNN (hex), \" (double quote), \\ (backslash),
+     * \n (newline), \r (carriage return), \t (tab).
+     */
+    static byte[] decodeEscapesToBytes(String escaped) {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        int i = 0;
+        while (i < escaped.length()) {
+            char c = escaped.charAt(i);
+            if (c == '\\' && i + 1 < escaped.length()) {
+                char next = escaped.charAt(i + 1);
+                if (next == 'x' && i + 3 < escaped.length()) {
+                    String hex = escaped.substring(i + 2, i + 4);
+                    try {
+                        baos.write(Integer.parseInt(hex, 16));
+                    } catch (NumberFormatException e) {
+                        baos.write((byte) c);
+                        baos.write((byte) next);
+                    }
+                    i += 4;
+                } else if (next == '"') {
+                    baos.write((byte) '"');
+                    i += 2;
+                } else if (next == '\\') {
+                    baos.write((byte) '\\');
+                    i += 2;
+                } else if (next == 'n') {
+                    baos.write((byte) '\n');
+                    i += 2;
+                } else if (next == 'r') {
+                    baos.write((byte) '\r');
+                    i += 2;
+                } else if (next == 't') {
+                    baos.write((byte) '\t');
+                    i += 2;
+                } else {
+                    baos.write((byte) c);
+                    i++;
+                }
+            } else {
+                baos.write((byte) c);
+                i++;
+            }
+        }
+        return baos.toByteArray();
     }
 
     /**
@@ -146,6 +220,7 @@ public class CommandParser {
             }
         } catch (NumberFormatException e) {
             // Fall through
+            System.err.println(e.getMessage());
         }
         return null;
     }
@@ -171,6 +246,61 @@ public class CommandParser {
             }
         } catch (NumberFormatException e) {
             return null;
+        }
+    }
+
+    /**
+     * Computes the combined string length of value arguments for write commands.
+     * This serves as a memory proxy when MEMORY USAGE is unavailable (file mode).
+     *
+     * @param cmd    the uppercase command name
+     * @param tokens the tokenized arguments (index 0 = command, 1 = key, 2+ = args)
+     * @return sum of value argument lengths, or -1 if the command has no values
+     */
+    private static long computeValueSize(String cmd, List<String> tokens) {
+        switch (cmd) {
+            case "SET":
+            case "SETNX":
+            case "GETSET":
+                return tokens.size() > 2 ? tokens.get(2).length() : -1;
+            case "SETEX":
+            case "PSETEX":
+                return tokens.size() > 3 ? tokens.get(3).length() : -1;
+            case "MSET":
+                if (tokens.size() < 3) return -1;
+                long msetSize = 0;
+                for (int i = 2; i < tokens.size(); i += 2) {
+                    msetSize += tokens.get(i).length();
+                }
+                return msetSize;
+            case "HSET":
+            case "HSETNX":
+                return tokens.size() > 3 ? tokens.get(3).length() : -1;
+            case "HMSET":
+                if (tokens.size() < 4) return -1;
+                long hmsetSize = 0;
+                for (int i = 3; i < tokens.size(); i += 2) {
+                    hmsetSize += tokens.get(i).length();
+                }
+                return hmsetSize;
+            case "SADD":
+                if (tokens.size() < 3) return -1;
+                long saddSize = 0;
+                for (int i = 2; i < tokens.size(); i++) {
+                    saddSize += tokens.get(i).length();
+                }
+                return saddSize;
+            case "ZADD":
+                if (tokens.size() < 4) return -1;
+                long zaddSize = 0;
+                for (int i = 3; i < tokens.size(); i += 2) {
+                    zaddSize += tokens.get(i).length();
+                }
+                return zaddSize;
+            case "RESTORE":
+                return tokens.size() > 3 ? tokens.get(3).length() : -1;
+            default:
+                return -1;
         }
     }
 }

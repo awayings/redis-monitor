@@ -643,4 +643,242 @@ public class MemoryIncrementAnalyzerIntegrationTest {
         assertTrue("Short duration should still produce a report",
                 output.contains("Redis Memory Increment"));
     }
+
+    // ========================================================================
+    // Test 18: File mode with temp log file
+    // ========================================================================
+
+    @Test
+    public void testFileModeWithTempLogFile() throws Exception {
+        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("file_mode_test_");
+        java.io.File logFile = new java.io.File(tempDir.toFile(), "test.log");
+
+        try (java.io.FileWriter fw = new java.io.FileWriter(logFile)) {
+            fw.write("100.000 [0 10.0.0.53:33414] \"SETEX\" \"order:100:detail\" \"3600\" \"data_value_1\"\n");
+            fw.write("100.500 [0 10.0.0.53:33414] \"SETEX\" \"order:101:detail\" \"3600\" \"data_value_2\"\n");
+            fw.write("101.000 [0 10.0.0.53:33414] \"SET\" \"user:1:profile\" \"profile_data_here\" \"EX\" \"7200\"\n");
+            fw.write("101.500 [0 10.0.0.101:58684] \"HSET\" \"cache:items\" \"field_a\" \"value_a\"\n");
+            fw.write("102.000 [0 10.0.0.101:58684] \"SADD\" \"tags:active\" \"tag1\" \"tag2\" \"tag3\"\n");
+            fw.write("102.500 [0 10.0.0.101:58684] \"SET\" \"log:events\" \"log_data_no_ttl\"\n");
+            fw.write("103.000 [0 10.0.0.101:58684] \"EXPIRE\" \"log:events\" \"1800\"\n");
+        }
+
+        Args args = Args.parse(new String[]{
+                "--source=file",
+                "--input-dir=" + tempDir.toFile().getAbsolutePath(),
+                "--upgrade-threshold=10",
+                "--top-n=20",
+                "--output=console"
+        });
+
+        MemoryIncrementAnalyzer analyzer = new MemoryIncrementAnalyzer(args);
+
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream captured = new java.io.PrintStream(baos);
+        java.io.PrintStream original = System.out;
+        System.setOut(captured);
+
+        try {
+            analyzer.run();
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = baos.toString();
+
+        assertTrue("Should show 'File Mode'", output.contains("File Mode"));
+        assertTrue("Should show 'Source:'", output.contains("Source:"));
+        assertTrue("Should contain per-file header", output.contains("--- File: test.log"));
+        assertTrue("Should contain memory estimation footnote", output.contains("value string length"));
+        assertTrue("Should contain TTL footnote", output.contains("inline"));
+        assertTrue("Should have captured writes", analyzer.getAggregator().getTotalWriteCount() > 0);
+
+        logFile.delete();
+        tempDir.toFile().delete();
+    }
+
+    // ========================================================================
+    // Test 19: File mode JSON output
+    // ========================================================================
+
+    @Test
+    public void testFileModeJsonOutput() throws Exception {
+        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("file_mode_json_");
+        java.io.File logFile = new java.io.File(tempDir.toFile(), "test.log");
+
+        try (java.io.FileWriter fw = new java.io.FileWriter(logFile)) {
+            fw.write("100.000 [0 10.0.0.1:1234] \"SETEX\" \"order:100\" \"3600\" \"hello\"\n");
+            fw.write("101.000 [0 10.0.0.1:1234] \"SET\" \"user:1\" \"world\" \"EX\" \"7200\"\n");
+        }
+
+        Args args = Args.parse(new String[]{
+                "--source=file",
+                "--input-dir=" + tempDir.toFile().getAbsolutePath(),
+                "--output=json"
+        });
+
+        MemoryIncrementAnalyzer analyzer = new MemoryIncrementAnalyzer(args);
+
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream captured = new java.io.PrintStream(baos);
+        java.io.PrintStream original = System.out;
+        System.setOut(captured);
+
+        try {
+            analyzer.run();
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = baos.toString();
+
+        assertTrue("JSON should contain meta", output.contains("\"meta\""));
+        assertTrue("JSON should contain patterns", output.contains("\"patterns\""));
+        assertTrue("JSON should contain sourceType", output.contains("\"sourceType\": \"file\""));
+        assertTrue("JSON should contain memoryEstimation", output.contains("\"memoryEstimation\": \"value_string_length\""));
+
+        logFile.delete();
+        tempDir.toFile().delete();
+    }
+
+    // ========================================================================
+    // Test 20: File mode empty directory
+    // ========================================================================
+
+    @Test
+    public void testFileModeEmptyDirectory() throws Exception {
+        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("file_mode_empty_");
+
+        Args args = Args.parse(new String[]{
+                "--source=file",
+                "--input-dir=" + tempDir.toFile().getAbsolutePath()
+        });
+
+        MemoryIncrementAnalyzer analyzer = new MemoryIncrementAnalyzer(args);
+
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream captured = new java.io.PrintStream(baos);
+        java.io.PrintStream original = System.out;
+        System.setOut(captured);
+
+        try {
+            analyzer.run();
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = baos.toString();
+        assertTrue("Should warn about no .log files", output.contains("No .log files found"));
+        assertEquals(0, analyzer.getAggregator().getTotalWriteCount());
+
+        tempDir.toFile().delete();
+    }
+
+    // ========================================================================
+    // Test 21: Periodic intermediate printing produces intermediate reports
+    // ========================================================================
+
+    @Test
+    public void testPeriodicIntermediatePrintingLiveMode() throws Exception {
+        String prefix = "__it_periodic:";
+
+        for (int i = 0; i < 10; i++) {
+            jedis.setex(prefix + i, 60, "data");
+        }
+
+        Args args = Args.parse(new String[]{
+                "--host=" + HOST, "--port=" + PORT, "--duration=5",
+                "--samples-per-pattern=3", "--ttl-samples-per-pattern=3",
+                "--upgrade-threshold=10", "--top-n=20", "--output=console",
+                "--print-interval=1"
+        });
+
+        MemoryIncrementAnalyzer analyzer = new MemoryIncrementAnalyzer(args);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PrintStream captured = new PrintStream(baos);
+        PrintStream original = System.out;
+        System.setOut(captured);
+
+        try {
+            Thread writer = new Thread(() -> {
+                Jedis w = new RedisConnectionFactory(HOST, PORT).createConnection();
+                long deadline = System.currentTimeMillis() + 4500;
+                while (System.currentTimeMillis() < deadline) {
+                    for (int i = 0; i < 10; i++) {
+                        w.setex(prefix + i, 60, "more_data");
+                    }
+                    try { Thread.sleep(200); } catch (Exception ignored) {}
+                }
+                w.close();
+            }, "TestWriter");
+            writer.start();
+
+            analyzer.run();
+            writer.join(5000);
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = baos.toString();
+
+        assertTrue("Should contain intermediate report",
+                output.contains("--- Intermediate Report"));
+        assertTrue("Should contain final report header",
+                output.contains("Redis Memory Increment"));
+    }
+
+    // ========================================================================
+    // Test 22: print-interval=0 produces no intermediate reports
+    // ========================================================================
+
+    @Test
+    public void testPrintIntervalZeroNoIntermediateReports() throws Exception {
+        String prefix = "__it_nointer:";
+
+        for (int i = 0; i < 5; i++) {
+            jedis.setex(prefix + i, 60, "data");
+        }
+
+        Args args = Args.parse(new String[]{
+                "--host=" + HOST, "--port=" + PORT, "--duration=3",
+                "--samples-per-pattern=2", "--ttl-samples-per-pattern=2",
+                "--upgrade-threshold=10", "--top-n=20", "--output=console",
+                "--print-interval=0"
+        });
+
+        MemoryIncrementAnalyzer analyzer = new MemoryIncrementAnalyzer(args);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PrintStream captured = new PrintStream(baos);
+        PrintStream original = System.out;
+        System.setOut(captured);
+
+        try {
+            Thread writer = new Thread(() -> {
+                Jedis w = new RedisConnectionFactory(HOST, PORT).createConnection();
+                long deadline = System.currentTimeMillis() + 2500;
+                while (System.currentTimeMillis() < deadline) {
+                    for (int i = 0; i < 5; i++) {
+                        w.setex(prefix + i, 60, "more");
+                    }
+                    try { Thread.sleep(200); } catch (Exception ignored) {}
+                }
+                w.close();
+            }, "TestWriter");
+            writer.start();
+
+            analyzer.run();
+            writer.join(5000);
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = baos.toString();
+
+        assertFalse("Should not contain intermediate report when print-interval=0",
+                output.contains("--- Intermediate Report"));
+        assertTrue("Should contain final report header",
+                output.contains("Redis Memory Increment"));
+    }
 }

@@ -44,13 +44,52 @@ public class PatternClustererTest {
     }
 
     @Test
-    public void testNoColonKeyGoesToPrefixTrie() {
-        PatternClusterer clusterer = new PatternClusterer(3, 100);
+    public void testUnderscoreDelimitedKeysUseSegmentClustering() {
+        PatternClusterer clusterer = new PatternClusterer(10, 100);
         String p1 = clusterer.cluster("user_profile_1001");
         String p2 = clusterer.cluster("user_profile_1002");
         String p3 = clusterer.cluster("other_key");
+        // user_profile_1001 and user_profile_1002 differ at only one segment -> near match -> same cluster
+        assertEquals(p1, p2);
+        // other_key has different segment count -> separate cluster
+        assertNotEquals(p1, p3);
+    }
+
+    @Test
+    public void testUnderscoreTwoMismatchCreatesSeparateClusters() {
+        PatternClusterer clusterer = new PatternClusterer(10, 100);
+        String p1 = clusterer.cluster("SYNC_CUSTOM_TOP_GOODS_16802");
+        String p2 = clusterer.cluster("SYNC_CUSTOM_LOW_GOODS_16771");
+        // TOP!=LOW and 16802!=16771 -> mismatchCount=2 -> separate clusters
+        assertNotEquals(p1, p2);
+        // Both should NOT be merged into a single SYNC_CUSTOM_* pattern
+        Map<String, Integer> sizes = clusterer.getClusterSizes();
+        assertFalse("Should not merge TOP and LOW into a single pattern",
+                sizes.containsKey("SYNC_CUSTOM_*"));
+    }
+
+    @Test
+    public void testUnderscoreUpgradeTriggersWildcard() {
+        PatternClusterer clusterer = new PatternClusterer(3, 100);
+        clusterer.cluster("SYNC_CUSTOM_TOP_GOODS_16802");
+        clusterer.cluster("SYNC_CUSTOM_TOP_GOODS_16803");
+        clusterer.cluster("SYNC_CUSTOM_TOP_GOODS_16804");
+        Map<String, Integer> sizes = clusterer.getClusterSizes();
+        boolean hasTopGoods = sizes.keySet().stream()
+                .anyMatch(p -> p.equals("SYNC_CUSTOM_TOP_GOODS_*"));
+        assertTrue("Expected SYNC_CUSTOM_TOP_GOODS_* after upgrade threshold", hasTopGoods);
+    }
+
+    @Test
+    public void testTrulyNoDelimiterGoesToPrefixTrie() {
+        PatternClusterer clusterer = new PatternClusterer(3, 100);
+        String p1 = clusterer.cluster("abcdef");
+        String p2 = clusterer.cluster("abcdef");
+        String p3 = clusterer.cluster("xyz");
+        // Same key returns same pattern from cache
+        assertEquals(p1, p2);
+        // Keys without : or _ still use prefix trie (not segment clustering)
         assertNotNull(p1);
-        assertNotNull(p2);
         assertNotNull(p3);
     }
 

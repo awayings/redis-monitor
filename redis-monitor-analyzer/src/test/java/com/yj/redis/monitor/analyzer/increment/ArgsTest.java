@@ -112,4 +112,64 @@ public class ArgsTest {
             // expected
         }
     }
+
+    @Test
+    public void testParseSourceFileWithInputDir() {
+        Args args = Args.parse(new String[]{"--source=file", "--input-dir=/tmp/logs"});
+        assertEquals(Args.Source.FILE, args.getSource());
+        assertEquals("/tmp/logs", args.getInputDir());
+    }
+
+    @Test
+    public void testParseSourceDefaultIsLive() {
+        Args args = Args.parse(new String[]{});
+        assertEquals(Args.Source.LIVE, args.getSource());
+        assertNull(args.getInputDir());
+    }
+
+    @Test
+    public void testParseSourceLive() {
+        Args args = Args.parse(new String[]{"--source=live"});
+        assertEquals(Args.Source.LIVE, args.getSource());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testInvalidSourceThrows() {
+        Args.parse(new String[]{"--source=invalid"});
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testSourceFileWithoutInputDirThrows() {
+        Args.parse(new String[]{"--source=file"});
+    }
+
+    @Test
+    public void testFileModeAcceptsInputDirOnly() {
+        Args args = Args.parse(new String[]{"--source=file", "--input-dir=/tmp/batch"});
+        assertEquals(Args.Source.FILE, args.getSource());
+        assertEquals("/tmp/batch", args.getInputDir());
+    }
+
+    @Test
+    public void testParsePrintIntervalDefault() {
+        Args args = Args.parse(new String[]{});
+        assertEquals(30, args.getPrintIntervalSec());
+    }
+
+    @Test
+    public void testParsePrintIntervalCustom() {
+        Args args = Args.parse(new String[]{"--print-interval=10"});
+        assertEquals(10, args.getPrintIntervalSec());
+    }
+
+    @Test
+    public void testParsePrintIntervalZero() {
+        Args args = Args.parse(new String[]{"--print-interval=0"});
+        assertEquals(0, args.getPrintIntervalSec());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testInvalidPrintIntervalNegativeThrows() {
+        Args.parse(new String[]{"--print-interval=-1"});
+    }
 }

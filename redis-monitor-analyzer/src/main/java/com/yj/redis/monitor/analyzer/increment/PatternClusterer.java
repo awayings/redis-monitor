@@ -33,10 +33,13 @@ public class PatternClusterer {
      * @return the pattern for this key
      */
     public String cluster(String rawKey) {
-        // 1. Check keyToPattern cache
+        // 1. Detect delimiter (needed for cache path branching)
+        String delimiter = detectDelimiter(rawKey);
+
+        // 2. Check keyToPattern cache
         String cachedPattern = keyToPattern.get(rawKey);
         if (cachedPattern != null) {
-            if (rawKey.contains(":")) {
+            if (delimiter != null) {
                 for (PatternClusterState state : clusters) {
                     if (state.getCurrentPattern().equals(cachedPattern)) {
                         state.incrementCount();
@@ -47,16 +50,16 @@ public class PatternClusterer {
             return cachedPattern;
         }
 
-        // 2. No colon key -> prefix trie
-        if (!rawKey.contains(":")) {
+        // 3. No delimiter -> prefix trie
+        if (delimiter == null) {
             return clusterNoColon(rawKey);
         }
 
-        // 3. Split by ":" into segments
-        String[] segments = rawKey.split(":");
+        // 4. Split by delimiter into segments
+        String[] segments = rawKey.split(delimiter);
 
-        // 4. Try exact match
-        PatternClusterState exact = findExactMatch(segments);
+        // 5. Try exact match
+        PatternClusterState exact = findExactMatch(segments, delimiter);
         if (exact != null) {
             exact.incrementCount();
             recordDistinctValues(exact, segments);
@@ -65,15 +68,15 @@ public class PatternClusterer {
             return pattern;
         }
 
-        // 5. Try near match
-        PatternClusterState near = findNearMatch(segments);
+        // 6. Try near match
+        PatternClusterState near = findNearMatch(segments, delimiter);
         if (near != null) {
             String pattern = near.getCurrentPattern();
             keyToPattern.put(rawKey, pattern);
             return pattern;
         }
 
-        // 6. Create new cluster with ALL segments as FIXED
+        // 7. Create new cluster with ALL segments as FIXED
         List<SegmentType> segmentTypes = new ArrayList<>(segments.length);
         List<String> fixedValues = new ArrayList<>(segments.length);
         for (String seg : segments) {
@@ -81,12 +84,18 @@ public class PatternClusterer {
             fixedValues.add(seg);
         }
 
-        String pattern = rawKey;
-        PatternClusterState newState = new PatternClusterState(pattern, segmentTypes, fixedValues);
+        String pattern = String.join(delimiter, segments);
+        PatternClusterState newState = new PatternClusterState(pattern, segmentTypes, fixedValues, delimiter);
         newState.incrementCount();
         clusters.add(newState);
         keyToPattern.put(rawKey, pattern);
         return pattern;
+    }
+
+    private static String detectDelimiter(String rawKey) {
+        if (rawKey.contains(":")) return ":";
+        if (rawKey.contains("_")) return "_";
+        return null;
     }
 
     /**
@@ -105,8 +114,11 @@ public class PatternClusterer {
      * Finds a cluster where all positions match exactly (FIXED positions match
      * their fixed value, variable positions match their type regex).
      */
-    private PatternClusterState findExactMatch(String[] segments) {
+    private PatternClusterState findExactMatch(String[] segments, String delimiter) {
         for (PatternClusterState state : clusters) {
+            if (!state.getDelimiter().equals(delimiter)) {
+                continue;
+            }
             if (state.getSegmentCount() != segments.length) {
                 continue;
             }
@@ -138,8 +150,11 @@ public class PatternClusterer {
      * exactly one FIXED position differs. Records the distinct value at the
      * mismatched position and triggers upgrade + dedup if threshold is reached.
      */
-    private PatternClusterState findNearMatch(String[] segments) {
+    private PatternClusterState findNearMatch(String[] segments, String delimiter) {
         for (PatternClusterState state : clusters) {
+            if (!state.getDelimiter().equals(delimiter)) {
+                continue;
+            }
             if (state.getSegmentCount() != segments.length) {
                 continue;
             }
