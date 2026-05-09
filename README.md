@@ -113,6 +113,33 @@ java -jar redis-monitor-analyzer-*.jar \
 
 JSON 模式产出与上述等价的结构化结果，可直接喂给后续分析管道。
 
+```
+Rank   Pattern                        Writes   Write/s    AvgTTL     AvgMem       Increment    Balanced
+  ------+--------------------------------+--------+----------+----------+------------+------------+------------
+  1      BATCH_RANDOM_TOP_ITEMS_*       3039     0.11       2.0h       22.95 KB     68.12 MB     17.36 MB
+  2      terminal_id_send_count_*       70204    2.44       720.0h     185 B        12.43 MB     1.09 GB
+  3      ITEMS_COLLECT_MEMBER_DATA_*    5735     0.20       1.0h       1.77 KB      9.92 MB      1.24 MB
+  4      CMS_RANDOM_ID_HISTORY          9093     0.32       240.0h     424 B        3.68 MB      110.36 MB
+  5      AUTH_LOGIN_TOKEN_*             124270   4.31       720.0h     30 B         3.61 MB      325.09 MB
+  6      SPREAD_ACTIVITY_FLAG_*         17898    0.62       168.0h     195 B        3.33 MB      69.88 MB
+  7      LATEST_BROWSE_KEY_*            17912    0.62       168.0h     192 B        3.29 MB      69.08 MB
+  8      REVIEW_NOTIFY_*                85893    2.98       24.0h      26 B         2.13 MB      6.38 MB
+  9      SELLER_STORE_DATA_*_*          7370     0.26       24.4h      155 B        1.09 MB      3.32 MB
+  10     portal:member:basket:total:meta:* 1110  0.04       1.0h       904 B        980.79 KB    122.51 KB
+  11     SPREAD_AB_EXPERIMENT_KEY_V2_*  3555     0.12       5m         249 B        865.49 KB    9.72 KB
+  12     *:*                            863      0.03       57.7h      517 B        436.13 KB    3.07 MB
+  13     i18n_v2_*_en_*                 2458     0.09       288.0h     140 B        337.73 KB    11.87 MB
+  14     NEW_HOME_CATALOG_*             192      0.01       4.0h       640 B        120.04 KB    60.23 KB
+  15     REDIS_GW_FETCH_HOME_CATALOG…   18       0.00       24.0h      5.83 KB      104.98 KB    314.71 KB
+  16     MODAL_V1_20260427_*_1          535      0.02       24.0h      196 B        102.40 KB    306.99 KB
+  17     member:labels:*                395      0.01       12.0h      237 B        91.61 KB     137.32 KB
+  18     member_signin_auto_get_voucher…  456    0.02       24.0h      186 B        82.83 KB     248.31 KB
+  19     SPREAD_WIDGET_LIST_V10…        13       0.00       1.0h       4.16 KB      54.04 KB     6.86 KB
+  20     SPREAD_WIDGET_LIST_V10…        9        0.00       1.0h       4.25 KB      38.21 KB     4.83 KB
+  ------+--------------------------------+--------+----------+----------+------------+------------+------------
+  TOTAL                                 358671                                      110.75 MB    1.70 GB
+```
+
 ---
 
 ## 项目特点
