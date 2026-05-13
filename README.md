@@ -2,48 +2,6 @@
 
 Java 8 多模块 Redis 监控与分析平台。在线监控 Redis 运行状态，离线分析 `MONITOR` 日志，并按 **key 模式** 给出内存增量归因报告。
 
-## 模块组成
-
-| 模块 | 职责 |
-|------|------|
-| `redis-monitor-common`   | 通用常量、共享数据模型、JSON 工具，零外部依赖 |
-| `redis-monitor-core`     | Redis 连接管理（Jedis + Lettuce）、`INFO` / `STATS` / `MONITOR` 采样 |
-| `redis-monitor-analyzer` | 慢查询分析、内存增量分析（含 CLI）、key 模式聚类 |
-| `redis-monitor-alert`    | 阈值告警引擎 |
-| `redis-monitor-web`      | Spring Boot REST / WebSocket 后端 |
-
-## 环境要求
-
-- JDK 8+
-- Maven 3.6+
-- Redis 4.0+
-
-## 构建
-
-```bash
-# 全量构建（含测试）
-mvn clean package
-
-# 跳过测试
-mvn clean package -DskipTests
-
-# 单独构建 analyzer 模块（生成可执行 fat-jar）
-mvn -pl redis-monitor-analyzer -am clean package
-```
-
-`redis-monitor-analyzer` 通过 `maven-shade-plugin` 打成可执行 jar，主类 `com.yj.redis.monitor.analyzer.increment.MemoryIncrementAnalyzer`。
-
-## 运行 Web 服务
-
-```bash
-cd redis-monitor-web
-mvn spring-boot:run
-```
-
-默认监听 `8080`，连接 `localhost:6379`。
-
----
-
 ## Analyzer CLI 用法
 
 `MemoryIncrementAnalyzer` 是一个独立的命令行工具，用于在一段时间内观测 Redis 写入流量，并按 **key 模式** 排名给出内存增量归因。支持两种数据源：
